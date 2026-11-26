@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EdgeHMI Studio — ESP32-S3 工业组态拖拽与实时仿真工作台</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #060b14;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 16px 20px;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px; border-bottom: 1px solid #1e293b; padding-bottom: 10px;
+      flex-wrap: wrap; gap: 10px;
+    }
+    header h1 { font-size: 18px; color: #38bdf8; letter-spacing: 0.3px; }
+    .meta { font-size: 12px; color: #94a3b8; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .pill { background: #0f172a; border: 1px solid #334155; padding: 4px 10px; border-radius: 999px; }
+    .pill.accent { border-color: #0ea5e9; color: #7dd3fc; }
+    .layout { display: grid; grid-template-columns: 836px 1fr; gap: 18px; align-items: start; }
+    .bezel {
+      background: #0f172a; border: 2px solid #334155; border-radius: 16px;
+      padding: 16px; box-shadow: 0 20px 50px rgba(0,0,0,0.55);
+    }
+    .bezel-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px; font-size: 12px; color: #94a3b8;
+    }
+    .mode-switch { display: flex; gap: 6px; }
+    .mode-btn {
+      background: #1e293b; border: 1px solid #334155; color: #cbd5e1;
+      padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .mode-btn.active { background: #0284c7; border-color: #38bdf8; color: #fff; font-weight: 600; }
+    #hmi-screen {
+      position: relative;
+      width: 800px; height: 480px;
+      background: #0b1220;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #1e293b;
+      user-select: none;
+    }
+    #hmi-screen.design-mode {
+      background-image: radial-gradient(#1e293b 1px, transparent 1px);
+      background-size: 16px 16px;
+    }
+    .w { position: absolute; }
+    .design-mode .w {
+      outline: 1px dashed rgba(56, 189, 248, 0.7);
+      cursor: move !important;
+    }
+    .design-mode .w:hover, .design-mode .w.selected {
+      outline: 2px solid #38bdf8;
+      z-index: 20;
+    }
+    .resize-handle {
+      position: absolute; right: 0; bottom: 0; width: 12px; height: 12px;
+      background: #38bdf8; border-radius: 2px 0 4px 0; cursor: nwse-resize; z-index: 30;
+    }
+    .coord-tag {
+      position: absolute; top: -18px; left: 0;
+      background: #0284c7; color: #fff; font-size: 10px; padding: 1px 5px;
+      border-radius: 3px; white-space: nowrap; pointer-events: none;
+    }
+    .w-card {
+      background: #111c2e; border: 1px solid #1e293b; border-radius: 10px;
+      padding: 10px 14px; color: #94a3b8; font-size: 12px; font-weight: 600; letter-spacing: 0.6px;
+    }
+    .w-label { display: flex; align-items: center; font-size: 15px; font-weight: 600; color: #cbd5e1; }
+    .w-value { display: flex; align-items: center; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .w-badge {
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 16px; font-size: 12px; font-weight: 700; color: #fff;
+    }
+    .w-button {
+      border: none; border-radius: 8px; color: #fff; font-weight: 700; font-size: 14px;
+      cursor: pointer; transition: filter 0.12s, transform 0.08s;
+    }
+    .w-button:hover { filter: brightness(1.12); }
+    .w-button:active { transform: scale(0.97); }
+    .w-bar { background: #1e293b; border-radius: 6px; overflow: hidden; }
+    .w-bar-fill { height: 100%; transition: width 0.2s ease; }
+    .w-switch {
+      border-radius: 999px; background: #334155; cursor: pointer;
+      display: flex; align-items: center; padding: 4px; transition: background 0.15s;
+    }
+    .w-switch.on { background: #14b8a6; justify-content: flex-end; }
+    .w-switch-knob { width: 26px; height: 26px; border-radius: 50%; background: #fff; }
+    .comm-banner {
+      position: absolute; top: 0; left: 0; right: 0; height: 32px;
+      background: #dc2626; color: #fff; font-size: 13px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; z-index: 60;
+      letter-spacing: 0.6px;
+    }
+    .panel {
+      background: #0f172a; border: 1px solid #1e293b; border-radius: 12px;
+      padding: 14px; margin-bottom: 12px;
+    }
+    .panel h3 { font-size: 12px; color: #94a3b8; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.6px; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ctrl-btn {
+      background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+      padding: 7px 11px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .ctrl-btn:hover { background: #334155; }
+    .ctrl-btn.danger { border-color: #ef4444; color: #fca5a5; }
+    .ctrl-btn.primary { background: #0284c7; border-color: #0284c7; color: #fff; font-weight: 600; }
+    textarea {
+      width: 100%; height: 220px; background: #060b14; color: #a7f3d0;
+      border: 1px solid #334155; border-radius: 8px; padding: 10px;
+      font-family: Consolas, Menlo, monospace; font-size: 12px; resize: vertical;
+    }
+    #alarms { max-height: 120px; overflow-y: auto; font-size: 12px; }
+    .alarm-row { padding: 5px 8px; border-radius: 6px; margin-bottom: 4px; background: #1e293b; display: flex; gap: 8px; }
+    .alarm-critical { border-left: 3px solid #ef4444; color: #fecaca; }
+    .alarm-warn { border-left: 3px solid #f59e0b; color: #fde68a; }
+    .alarm-info { border-left: 3px solid #38bdf8; color: #bae6fd; }
+    #status-msg { font-size: 12px; margin-top: 8px; min-height: 18px; }
+
+    /* Modal for High-Risk Confirmation & Engineer PIN */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-box {
+      background: #0f172a; border: 1px solid #475569; border-radius: 14px;
+      width: 380px; padding: 20px; box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+    }
+    .modal-box h2 { font-size: 16px; color: #f87171; margin-bottom: 10px; }
+    .modal-box p { font-size: 14px; color: #cbd5e1; margin-bottom: 14px; line-height: 1.5; }
+    .pin-input {
+      width: 100%; padding: 10px 12px; background: #060b14; border: 1px solid #334155;
+      color: #fff; border-radius: 8px; font-size: 16px; letter-spacing: 4px;
+      margin-bottom: 12px; text-align: center;
+    }
+    .modal-err { color: #f87171; font-size: 12px; min-height: 16px; margin-bottom: 10px; }
+    .token-box {
+      background: #060b14; border: 1px solid #334155; color: #e2e8f0;
+      padding: 4px 8px; border-radius: 6px; font-size: 12px; width: 170px;
+    }
+    .insp-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+      margin-bottom: 8px; font-size: 12px;
+    }
+    .insp-field { display: flex; flex-direction: column; gap: 3px; }
+    .insp-field label { color: #94a3b8; font-size: 11px; }
+    .insp-field input, .insp-field select {
+      background: #060b14; border: 1px solid #334155; color: #e2e8f0;
+      padding: 5px 7px; border-radius: 6px; font-size: 12px;
+    }
+    .insp-checks { display: flex; gap: 14px; align-items: center; font-size: 12px; margin-bottom: 8px; color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>EdgeHMI Studio · ESP32-S3 工业组态拖拽与实时仿真</h1>
+    <div class="meta">
+      <span class="pill accent" id="mb-pill">Modbus Block Read: --</span>
+      <span class="pill" id="mem-pill">SRAM: -- | PSRAM FB: --</span>
+      <span class="pill" id="nvs-pill">NVS: 0 keys</span>
+      <input type="password" id="api-token-input" class="token-box" value="edgehmi-secret-2026" placeholder="Bearer API Token" title="HTTP / OTA Bearer Token" />
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="bezel">
+      <div class="bezel-bar">
+        <span id="dev-name">ESP32-S3 Industrial HMI</span>
+        <div class="mode-switch">
+          <button class="mode-btn active" id="btn-run-mode" onclick="setMode(false)">运行模式 (Run)</button>
+          <button class="mode-btn" id="btn-design-mode" onclick="setMode(true)">拖拽组态 (Design)</button>
+        </div>
+        <span id="page-indicator">Page: --</span>
+      </div>
+      <div id="hmi-screen"></div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h3>1. 工业模板切换 · 故障注入 · NVS 掉电保持</h3>
+        <div class="btn-row" id="template-btns" style="margin-bottom: 8px;"></div>
+        <div class="btn-row">
+          <button class="ctrl-btn danger" onclick="injectFault('tank_level', 94.5)">注入高液位 94.5%</button>
+          <button class="ctrl-btn danger" onclick="injectFault('motor_curr', 9.4)">注入过流 9.4A</button>
+          <button class="ctrl-btn danger" onclick="injectFault('grid_power_w', -180)">注入逆流 -180W</button>
+          <button class="ctrl-btn danger" onclick="injectFault('inv_temp_c', 68.5)">注入高温 68.5C</button>
+          <button class="ctrl-btn danger" id="btn-comm-loss" onclick="toggleCommLoss()">模拟 RS485 断线</button>
+          <button class="ctrl-btn" onclick="clearNvs()">清空 NVS 保持值</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>2. 可视化控件属性面板 (Inspector)</h3>
+        <div class="btn-row" style="margin-bottom: 8px;">
+          <select id="new-widget-type" class="token-box" style="width:120px;">
+            <option value="value">数值显示 (value)</option>
+            <option value="gauge">圆弧仪表 (gauge)</option>
+            <option value="bar">进度条 (bar)</option>
+            <option value="button">按钮 (button)</option>
+            <option value="switch">开关 (switch)</option>
+            <option value="badge">状态徽章 (badge)</option>
+            <option value="label">文本标签 (label)</option>
+            <option value="card">卡片容器 (card)</option>
+            <option value="chart">趋势曲线 (chart)</option>
+          </select>
+          <button class="ctrl-btn primary" onclick="addWidget()">+ 添加控件</button>
+          <button class="ctrl-btn danger" id="btn-del-widget" onclick="deleteSelectedWidget()" disabled>删除选中控件</button>
+        </div>
+        <div id="inspector-empty" style="font-size:12px;color:#64748b;">切换到“拖拽组态 (Design)”并点击画布上的任意控件即可编辑属性。</div>
+        <div id="inspector-form" style="display:none;">
+          <div class="insp-grid">
+            <div class="insp-field"><label>控件 ID</label><input id="insp-id" type="text" readonly /></div>
+            <div class="insp-field"><label>绑定测点 (bind)</label><select id="insp-bind"></select></div>
+            <div class="insp-field"><label>文本 (text)</label><input id="insp-text" type="text" /></div>
+            <div class="insp-field"><label>单位 (unit)</label><input id="insp-unit" type="text" /></div>
+            <div class="insp-field"><label>位置 X / Y</label><div style="display:flex;gap:4px;"><input id="insp-x" type="number" style="width:50%;" /><input id="insp-y" type="number" style="width:50%;" /></div></div>
+            <div class="insp-field"><label>尺寸 W / H</label><div style="display:flex;gap:4px;"><input id="insp-w" type="number" style="width:50%;" /><input id="insp-h" type="number" style="width:50%;" /></div></div>
+            <div class="insp-field"><label>量程 Min / Max</label><div style="display:flex;gap:4px;"><input id="insp-min" type="number" step="any" style="width:50%;" /><input id="insp-max" type="number" step="any" style="width:50%;" /></div></div>
+            <div class="insp-field"><label>颜色 / 写入值</label><div style="display:flex;gap:4px;"><input id="insp-color" type="color" style="width:44px;padding:2px;" /><input id="insp-wval" type="number" step="any" placeholder="write_value" style="flex:1;" /></div></div>
+          </div>
+          <div class="insp-checks">
+            <label><input type="checkbox" id="insp-confirm" /> 二次确认 (confirm)</label>
+            <label><input type="checkbox" id="insp-pin" /> 工程师 PIN 保护</label>
+          </div>
+          <div class="btn-row">
+            <button class="ctrl-btn primary" onclick="applyInspector()">应用属性并热保存</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>3. 实时联锁 · 权限审计 · 告警日志</h3>
+        <div id="alarms"><div style="color:#64748b">等待事件...</div></div>
+      </div>
+
+      <div class="panel">
+        <h3>4. config.json 实时同步与免编译热更新</h3>
+        <textarea id="cfg-editor" spellcheck="false"></textarea>
+        <div class="btn-row" style="margin-top: 8px;">
+          <button class="ctrl-btn primary" onclick="hotReload()">校验并热更新 HMI (POST /api/config)</button>
+          <button class="ctrl-btn" onclick="syncEditor()">从画布同步 JSON</button>
+        </div>
+        <div id="status-msg"></div>
+      </div>
+
+      <div class="panel">
+        <h3>5. 局域网设备自动发现 (UDP 56888) &amp; 固件 OTA</h3>
+        <div class="btn-row" style="margin-bottom: 8px;">
+          <button class="ctrl-btn primary" onclick="scanDevices()">扫描局域网 EdgeHMI 设备</button>
+          <button class="ctrl-btn" onclick="simulateFirmwareOta()">模拟推送固件 OTA (v1.2.0 + SHA256)</button>
+        </div>
+        <div id="fleet-list" style="font-size:12px;color:#94a3b8;">点击“扫描局域网设备”自动发现同网段 ESP32-S3 / 仿真节点...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation / Engineer PIN Modal -->
+  <div class="modal-backdrop" id="confirm-modal">
+    <div class="modal-box">
+      <h2 id="modal-title">高危操作确认</h2>
+      <p id="modal-desc">确认执行该操作？</p>
+      <div id="pin-wrap" style="display:none;">
+        <input type="password" id="pin-input" class="pin-input" placeholder="输入工程师 PIN (默认 1234)" maxlength="8" />
+      </div>
+      <div class="modal-err" id="modal-err"></div>
+      <div class="btn-row" style="justify-content: flex-end;">
+        <button class="ctrl-btn" onclick="closeModal()">取消</button>
+        <button class="ctrl-btn danger" onclick="submitModal()">确认执行</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+let currentConfig = null;
+let currentPageId = null;
+let lastState = null;
+let editorLoaded = false;
+let designMode = false;
+let selectedWidgetId = null;
+let pendingWidget = null;
+let dragState = null;
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeColor(c, fallback = '#2DD4BF') {
+  return /^#[0-9a-fA-F]{6}$/.test(String(c || '')) ? c : fallback;
+}
+
+function setStatus(msg, color = '#38bdf8') {
+  const el = document.getElementById('status-msg');
+  el.style.color = color;
+  el.textContent = msg;
+}
+
+async function postJson(url, body, extraHeaders = {}) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    body: typeof body === 'string' ? body : JSON.stringify(body)
+  });
+  return { status: res.status, data: await res.json() };
+}
+
+function authHeaders() {
+  const tok = (document.getElementById('api-token-input')?.value || '').trim();
+  return tok ? { 'Authorization': 'Bearer ' + tok } : {};
+}
+
+function getActivePage() {
+  if (!currentConfig || !currentConfig.pages?.length) return null;
+  return currentConfig.pages.find(p => p.id === currentPageId) || currentConfig.pages[0];
+}
+
+function populateInspector(w) {
+  const emptyEl = document.getElementById('inspector-empty');
+  const formEl = document.getElementById('inspector-form');
+  const delBtn = document.getElementById('btn-del-widget');
+  if (!w) {
+    emptyEl.style.display = 'block';
+    formEl.style.display = 'none';
+    delBtn.disabled = true;
+    return;
+  }
+  emptyEl.style.display = 'none';
+  formEl.style.display = 'block';
+  delBtn.disabled = false;
+
+  document.getElementById('insp-id').value = w.id || '';
+  const sel = document.getElementById('insp-bind');
+  sel.innerHTML = '';
+  const optNone = document.createElement('option');
+  optNone.value = '';
+  optNone.textContent = '(无绑定)';
+  sel.appendChild(optNone);
+  for (const pt of (currentConfig?.modbus?.points || [])) {
+    const o = document.createElement('option');
+    o.value = pt.tag;
+    o.textContent = `${pt.tag} (${pt.rw || 'r'})`;
+    sel.appendChild(o);
+  }
+  sel.value = w.bind || '';
+
+  document.getElementById('insp-text').value = w.text || '';
+  document.getElementById('insp-unit').value = w.unit || '';
+  document.getElementById('insp-x').value = w.x ?? 0;
+  document.getElementById('insp-y').value = w.y ?? 0;
+  document.getElementById('insp-w').value = w.w ?? 100;
+  document.getElementById('insp-h').value = w.h ?? 40;
+  document.getElementById('insp-min').value = w.min ?? 0;
+  document.getElementById('insp-max').value = w.max ?? 100;
+  document.getElementById('insp-color').value = sanitizeColor(w.color, '#2DD4BF');
+  document.getElementById('insp-wval').value = w.write_value !== undefined ? w.write_value : '';
+  document.getElementById('insp-confirm').checked = !!w.confirm;
+  document.getElementById('insp-pin').checked = !!w.pin_required;
+}
+
+async function applyInspector() {
+  const page = getActivePage();
+  if (!page || !selectedWidgetId) return;
+  const w = page.widgets.find(x => x.id === selectedWidgetId);
+  if (!w) return;
+
+  const bindVal = document.getElementById('insp-bind').value;
+  if (bindVal) w.bind = bindVal; else delete w.bind;
+  const textVal = document.getElementById('insp-text').value;
+  if (textVal) w.text = textVal; else delete w.text;
+  const unitVal = document.getElementById('insp-unit').value;
+  if (unitVal) w.unit = unitVal; else delete w.unit;
+
+  w.x = parseInt(document.getElementById('insp-x').value, 10) || 0;
+  w.y = parseInt(document.getElementById('insp-y').value, 10) || 0;
+  w.w = Math.max(8, parseInt(document.getElementById('insp-w').value, 10) || 80);
+  w.h = Math.max(8, parseInt(document.getElementById('insp-h').value, 10) || 32);
+  w.min = parseFloat(document.getElementById('insp-min').value);
+  if (Number.isNaN(w.min)) delete w.min;
+  w.max = parseFloat(document.getElementById('insp-max').value);
+  if (Number.isNaN(w.max)) delete w.max;
+  w.color = document.getElementById('insp-color').value;
+
+  const wvalStr = document.getElementById('insp-wval').value.trim();
+  if (wvalStr !== '') w.write_value = parseFloat(wvalStr); else delete w.write_value;
+  w.confirm = document.getElementById('insp-confirm').checked;
+  w.pin_required = document.getElementById('insp-pin').checked;
+
+  syncEditor();
+  const r = await postJson('/api/config', JSON.stringify(currentConfig), authHeaders());
+  if (r.data.ok) {
+    if (lastState) renderHMI(lastState, true);
+    setStatus(`已更新控件 ${w.id} 属性并热保存`, '#34d399');
+  } else {
+    setStatus(`属性校验失败：${r.data.message}`, '#f87171');
+  }
+}
+
+async function addWidget() {
+  const page = getActivePage();
+  if (!page) return;
+  if (!designMode) setMode(true);
+  const type = document.getElementById('new-widget-type').value;
+  const id = `${type}_${Date.now().toString().slice(-4)}`;
+  const firstTag = currentConfig?.modbus?.points?.[0]?.tag || '';
+  const w = { id, type, x: 40, y: 80, w: 140, h: 44, color: '#2DD4BF' };
+  if (type === 'gauge') { w.w = 140; w.h = 140; w.min = 0; w.max = 100; if (firstTag) w.bind = firstTag; }
+  else if (type === 'bar') { w.w = 200; w.h = 22; w.min = 0; w.max = 100; if (firstTag) w.bind = firstTag; }
+  else if (type === 'chart') { w.w = 240; w.h = 100; w.min = 0; w.max = 100; if (firstTag) w.bind = firstTag; }
+  else if (type === 'value') { w.decimals = 1; if (firstTag) w.bind = firstTag; }
+  else if (type === 'switch') { w.w = 64; w.h = 34; }
+  else if (type === 'button') { w.text = 'NEW BTN'; }
+  else if (type === 'label') { w.text = 'New Label'; }
+  else if (type === 'card') { w.w = 220; w.h = 140; w.text = 'NEW CARD'; }
+  else if (type === 'badge') { w.true_text = 'ON'; w.false_text = 'OFF'; if (firstTag) w.bind = firstTag; }
+
+  page.widgets.push(w);
+  selectedWidgetId = id;
+  populateInspector(w);
+  syncEditor();
+  const r = await postJson('/api/config', JSON.stringify(currentConfig), authHeaders());
+  if (lastState) renderHMI(lastState, true);
+  setStatus(r.data.ok ? `已添加控件 ${id}` : `添加失败：${r.data.message}`, r.data.ok ? '#34d399' : '#f87171');
+}
+
+async function deleteSelectedWidget() {
+  const page = getActivePage();
+  if (!page || !selectedWidgetId) return;
+  page.widgets = page.widgets.filter(x => x.id !== selectedWidgetId);
+  const removed = selectedWidgetId;
+  selectedWidgetId = null;
+  populateInspector(null);
+  syncEditor();
+  const r = await postJson('/api/config', JSON.stringify(currentConfig), authHeaders());
+  if (lastState) renderHMI(lastState, true);
+  setStatus(r.data.ok ? `已删除控件 ${removed}` : `删除失败：${r.data.message}`, r.data.ok ? '#34d399' : '#f87171');
+}
+
+async function toggleCommLoss() {
+  const next = !(lastState && lastState.comm_loss);
+  await postJson('/api/comm_loss', { active: next });
+  setStatus(next ? '已模拟 RS485 断线 — 触发 Fail-Safe 安全联锁！' : '已恢复 RS485 通讯', next ? '#f87171' : '#34d399');
+}
+
+async function scanDevices() {
+  const box = document.getElementById('fleet-list');
+  box.textContent = '正在向局域网广播 UDP 发现探测包...';
+  const res = await fetch('/api/discover');
+  const data = await res.json();
+  box.innerHTML = '';
+  if (!data.devices || !data.devices.length) {
+    box.textContent = '未发现局域网 EdgeHMI 设备';
+    return;
+  }
+  for (const d of data.devices) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:#1e293b;border-radius:6px;margin-bottom:4px;';
+    const info = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = String(d.id || 'unknown');
+    info.appendChild(strong);
+    info.appendChild(document.createTextNode(
+      ` (${d.name || ''}) · ${d.url || ''} · FW v${d.fw_ver || ''} · ${d.width || 0}×${d.height || 0}`
+    ));
+    const btn = document.createElement('button');
+    btn.className = 'ctrl-btn primary';
+    btn.style.padding = '3px 8px';
+    btn.textContent = '热推配置';
+    btn.addEventListener('click', () => pushToDevice(String(d.url || '')));
+    row.appendChild(info);
+    row.appendChild(btn);
+    box.appendChild(row);
+  }
+}
+
+async function pushToDevice(url) {
+  const r = await postJson('/api/fleet/push_config', { target_url: url }, authHeaders());
+  setStatus(r.data.ok ? `已成功将当前配置热推送至 ${url}` : `推送失败：${r.data.message}`, r.data.ok ? '#34d399' : '#f87171');
+}
+
+async function simulateFirmwareOta() {
+  const sampleBin = new TextEncoder().encode('EDGEHMI-ESP32S3-FIRMWARE-IMAGE-V1.2.0-' + Date.now());
+  const hashBuf = await crypto.subtle.digest('SHA-256', sampleBin);
+  const shaHex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const res = await fetch('/api/ota/firmware', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-EdgeHMI-SHA256': shaHex,
+      'X-EdgeHMI-Version': '1.2.0',
+      ...authHeaders()
+    },
+    body: sampleBin
+  });
+  const data = await res.json();
+  setStatus(data.ok ? `固件 OTA 校验通过并生效：${data.message}` : `OTA 失败：${data.message}`, data.ok ? '#34d399' : '#f87171');
+}
+
+function setMode(isDesign) {
+  designMode = isDesign;
+  document.getElementById('btn-run-mode').classList.toggle('active', !isDesign);
+  document.getElementById('btn-design-mode').classList.toggle('active', isDesign);
+  document.getElementById('hmi-screen').classList.toggle('design-mode', isDesign);
+  if (lastState) renderHMI(lastState, true);
+  setStatus(isDesign
+    ? '已进入拖拽组态模式：直接拖动控件移动，拖动右下角蓝块缩放（自动吸附 4px 网格并同步 JSON）'
+    : '已切回运行模式：可点击按钮/开关体验真实交互与 PIN 二次确认');
+}
+
+function openModal(w) {
+  pendingWidget = w;
+  document.getElementById('modal-title').textContent = w.pin_required ? '工程师权限二次确认' : '高危操作确认';
+  document.getElementById('modal-desc').textContent = w.confirm_text || `确认执行 ${w.text || w.id}？`;
+  document.getElementById('pin-wrap').style.display = w.pin_required ? 'block' : 'none';
+  document.getElementById('pin-input').value = '';
+  document.getElementById('modal-err').textContent = '';
+  document.getElementById('confirm-modal').classList.add('open');
+  if (w.pin_required) document.getElementById('pin-input').focus();
+}
+
+function closeModal() {
+  pendingWidget = null;
+  document.getElementById('confirm-modal').classList.remove('open');
+}
+
+async function submitModal() {
+  if (!pendingWidget) return;
+  const pin = document.getElementById('pin-input').value;
+  const r = await postJson('/api/write', {
+    tag: pendingWidget.bind,
+    value: pendingWidget.write_value,
+    widget_id: pendingWidget.id,
+    pin: pin
+  });
+  if (r.data.ok) {
+    closeModal();
+    setStatus(`已执行高危指令：${pendingWidget.bind} = ${pendingWidget.write_value}`, '#34d399');
+  } else {
+    document.getElementById('modal-err').textContent = '鉴权失败：' + r.data.message;
+  }
+}
+
+async function writeTag(tag, val) {
+  await postJson('/api/write', { tag, value: val });
+}
+
+async function injectFault(tag, val) {
+  const r = await postJson('/api/write', { tag, value: val, force: true });
+  setStatus(r.data.ok ? `已注入故障 ${tag}=${val}（持续 4 秒）` : `当前模板不含测点 ${tag}`, r.data.ok ? '#f59e0b' : '#f87171');
+}
+
+async function clearNvs() {
+  await postJson('/api/nvs/clear', {});
+  setStatus('已清空 NVS 掉电保持区，设定值恢复出厂默认', '#34d399');
+}
+
+async function loadTemplate(name) {
+  const r = await postJson('/api/load_template', { name });
+  if (r.data.ok) {
+    currentPageId = null;
+    editorLoaded = false;
+    setStatus(`已热切换工业模板：${name}`, '#34d399');
+  }
+}
+
+async function hotReload() {
+  const raw = document.getElementById('cfg-editor').value;
+  const r = await postJson('/api/config', raw, authHeaders());
+  if (r.data.ok) {
+    setStatus('Bearer 鉴权 + 配置校验通过，已完成免编译热更新！', '#34d399');
+  } else {
+    setStatus('热更新被拒绝（原配置不受影响）：' + r.data.message, '#f87171');
+  }
+}
+
+function syncEditor() {
+  if (currentConfig) {
+    document.getElementById('cfg-editor').value = JSON.stringify(currentConfig, null, 2);
+  }
+}
+
+function renderGaugeSvg(w, val) {
+  const min = w.min ?? 0, max = w.max ?? 100;
+  const pct = Math.max(0, Math.min(1, (val - min) / ((max - min) || 1)));
+  const r = Math.max(10, Math.min(w.w, w.h) / 2 - 14);
+  const cx = w.w / 2, cy = w.h / 2;
+  const circ = 2 * Math.PI * r;
+  const arcLen = circ * 0.75;
+  const dash = arcLen * pct;
+  const txt = escapeHtml(`${val.toFixed(w.decimals ?? 1)} ${w.unit || ''}`.trim());
+  const col = sanitizeColor(w.color, '#2DD4BF');
+  return `
+    <svg width="${w.w}" height="${w.h}">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1e293b" stroke-width="14"
+        stroke-dasharray="${arcLen} ${circ}" stroke-linecap="round"
+        transform="rotate(135 ${cx} ${cy})" />
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="14"
+        stroke-dasharray="${dash} ${circ}" stroke-linecap="round"
+        transform="rotate(135 ${cx} ${cy})" />
+      <text x="${cx}" y="${cy + 6}" text-anchor="middle" fill="#f8fafc" font-size="22" font-weight="700">${txt}</text>
+    </svg>`;
+}
+
+function renderChartSvg(w, pts) {
+  const min = w.min ?? 0, max = w.max ?? 100;
+  const pad = 8;
+  const iw = Math.max(10, w.w - pad * 2), ih = Math.max(10, w.h - pad * 2);
+  const col = sanitizeColor(w.color, '#2DD4BF');
+  const coords = (pts || []).map((v, i) => {
+    const x = pad + (i / Math.max(1, pts.length - 1)) * iw;
+    const norm = Math.max(0, Math.min(1, (v - min) / ((max - min) || 1)));
+    const y = pad + (1 - norm) * ih;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `
+    <svg width="${w.w}" height="${w.h}" style="background:#0a101d;border-radius:6px;border:1px solid #1e293b;">
+      <polyline fill="none" stroke="${col}" stroke-width="2.5" points="${coords}" />
+    </svg>`;
+}
+
+function attachDragHandlers(el, w, dev) {
+  el.onmousedown = (ev) => {
+    if (!designMode) return;
+    ev.stopPropagation();
+    selectedWidgetId = w.id;
+    populateInspector(w);
+    document.querySelectorAll('#hmi-screen .w.selected').forEach(n => n.classList.remove('selected'));
+    el.classList.add('selected');
+    const isResize = ev.target.classList.contains('resize-handle');
+    dragState = {
+      w, el, isResize,
+      startX: ev.clientX, startY: ev.clientY,
+      origX: w.x, origY: w.y, origW: w.w, origH: w.h,
+      maxW: dev.width, maxH: dev.height,
+      moved: false
+    };
+  };
+}
+
+window.addEventListener('mousemove', (ev) => {
+  if (!dragState) return;
+  const dx = ev.clientX - dragState.startX;
+  const dy = ev.clientY - dragState.startY;
+  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragState.moved = true;
+  const snap = (v) => Math.round(v / 4) * 4;
+  const w = dragState.w;
+  if (dragState.isResize) {
+    w.w = Math.max(24, Math.min(dragState.maxW - w.x, snap(dragState.origW + dx)));
+    w.h = Math.max(20, Math.min(dragState.maxH - w.y, snap(dragState.origH + dy)));
+    dragState.el.style.width = w.w + 'px';
+    dragState.el.style.height = w.h + 'px';
+  } else {
+    w.x = Math.max(0, Math.min(dragState.maxW - w.w, snap(dragState.origX + dx)));
+    w.y = Math.max(0, Math.min(dragState.maxH - w.h, snap(dragState.origY + dy)));
+    dragState.el.style.left = w.x + 'px';
+    dragState.el.style.top = w.y + 'px';
+  }
+  const ct = dragState.el.querySelector('.coord-tag');
+  if (ct) ct.textContent = `${w.id}: ${w.x},${w.y} (${w.w}×${w.h})`;
+  populateInspector(w);
+});
+
+window.addEventListener('mouseup', async () => {
+  if (!dragState) return;
+  const w = dragState.w;
+  const didMove = dragState.moved;
+  dragState = null;
+  if (!didMove) return;
+  syncEditor();
+  const r = await postJson('/api/config', JSON.stringify(currentConfig), authHeaders());
+  setStatus(r.data.ok
+    ? `拖拽已同步并热保存：${w.id} -> (${w.x}, ${w.y}) ${w.w}×${w.h}`
+    : `坐标越界未保存：${r.data.message}`, r.data.ok ? '#34d399' : '#f87171');
+});
+
+function renderHMI(state, forceRedraw = false) {
+  lastState = state;
+  if (designMode && !forceRedraw) return;
+
+  currentConfig = state.config;
+  const dev = state.config.device;
+  const screen = document.getElementById('hmi-screen');
+  screen.style.width = dev.width + 'px';
+  screen.style.height = dev.height + 'px';
+  screen.style.backgroundColor = dev.theme === 'light' ? '#f8fafc' : '#0b1220';
+
+  document.getElementById('dev-name').textContent = `${dev.name} (${dev.width}×${dev.height})`;
+  const ratio = (state.stats.tags / Math.max(1, state.stats.mb_blocks)).toFixed(1);
+  document.getElementById('mb-pill').textContent =
+    `Modbus Block Read: ${state.stats.tags} pts -> ${state.stats.mb_blocks} blocks (${ratio}x)`;
+  document.getElementById('mem-pill').textContent =
+    `SRAM ~${state.stats.est_sram_kb} KB | PSRAM FB ~${state.stats.est_fb_psram_kb} KB`;
+  document.getElementById('nvs-pill').textContent =
+    `NVS: ${Object.keys(state.nvs || {}).length} saved`;
+
+  if (!editorLoaded) {
+    syncEditor();
+    editorLoaded = true;
+  }
+
+  const tb = document.getElementById('template-btns');
+  if (!tb.dataset.built) {
+    tb.innerHTML = '';
+    for (const n of state.templates) {
+      const btn = document.createElement('button');
+      btn.className = 'ctrl-btn';
+      btn.textContent = `加载 ${n}`;
+      btn.addEventListener('click', () => loadTemplate(n));
+      tb.appendChild(btn);
+    }
+    tb.dataset.built = '1';
+  }
+
+  const pages = state.config.pages;
+  let page = pages.find(p => p.id === currentPageId) || pages[0];
+  currentPageId = page.id;
+  document.getElementById('page-indicator').textContent = `Page: ${page.title}`;
+
+  screen.innerHTML = '';
+  const clBtn = document.getElementById('btn-comm-loss');
+  if (clBtn) clBtn.textContent = state.comm_loss ? '恢复 RS485 通讯' : '模拟 RS485 断线';
+  if (state.comm_loss) {
+    const b = document.createElement('div');
+    b.className = 'comm-banner';
+    b.textContent = '⚠ RS485 COMM LOSS — FAIL-SAFE ACTIVE';
+    screen.appendChild(b);
+  }
+  for (const w of page.widgets) {
+    const tagObj = w.bind ? state.tags[w.bind] : null;
+    const val = tagObj ? tagObj.value : 0;
+    const el = document.createElement(w.type === 'button' ? 'button' : 'div');
+    el.className = `w w-${w.type}`;
+    el.style.left = w.x + 'px';
+    el.style.top = w.y + 'px';
+    el.style.width = w.w + 'px';
+    el.style.height = w.h + 'px';
+
+    if (w.type === 'card' || w.type === 'label') {
+      el.textContent = w.text || '';
+    } else if (w.type === 'value') {
+      el.style.color = w.color || '#38bdf8';
+      el.textContent = `${val.toFixed(w.decimals ?? 1)} ${w.unit || ''}`.trim();
+    } else if (w.type === 'gauge') {
+      el.innerHTML = renderGaugeSvg(w, val);
+    } else if (w.type === 'bar') {
+      const pct = Math.max(0, Math.min(100, ((val - (w.min ?? 0)) / (((w.max ?? 100) - (w.min ?? 0)) || 1)) * 100));
+      el.innerHTML = `<div class="w-bar-fill" style="width:${pct}%;background:${w.color || '#2DD4BF'}"></div>`;
+    } else if (w.type === 'badge') {
+      const on = Math.abs(val) > 0.5;
+      el.style.background = on ? (w.color || '#10b981') : '#334155';
+      el.textContent = on ? (w.true_text || 'ACTIVE') : (w.false_text || 'IDLE');
+    } else if (w.type === 'button') {
+      el.style.background = w.color || '#334155';
+      el.textContent = (w.pin_required ? '🔒 ' : '') + (w.text || w.id);
+      el.onclick = () => {
+        if (designMode) return;
+        if (w.nav_page) currentPageId = w.nav_page;
+        if (w.bind && w.write_value !== undefined) {
+          if (w.confirm || w.pin_required) {
+            openModal(w);
+          } else {
+            writeTag(w.bind, w.write_value);
+          }
+        }
+      };
+    } else if (w.type === 'switch') {
+      const on = Math.abs(val) > 0.5;
+      if (on) el.classList.add('on');
+      el.innerHTML = '<div class="w-switch-knob"></div>';
+      el.onclick = () => {
+        if (designMode) return;
+        if (w.bind) writeTag(w.bind, on ? 0 : 1);
+      };
+    } else if (w.type === 'chart') {
+      el.innerHTML = renderChartSvg(w, w.bind ? state.history[w.bind] : []);
+    }
+
+    if (designMode) {
+      if (w.id === selectedWidgetId) el.classList.add('selected');
+      const ct = document.createElement('div');
+      ct.className = 'coord-tag';
+      ct.textContent = `${w.id}: ${w.x},${w.y} (${w.w}×${w.h})`;
+      el.appendChild(ct);
+      const rh = document.createElement('div');
+      rh.className = 'resize-handle';
+      el.appendChild(rh);
+      attachDragHandlers(el, w, dev);
+    }
+
+    screen.appendChild(el);
+  }
+
+  const al = document.getElementById('alarms');
+  al.innerHTML = '';
+  if (!state.alarms || !state.alarms.length) {
+    const empty = document.createElement('div');
+    empty.style.color = '#64748b';
+    empty.textContent = '系统正常，无活动告警';
+    al.appendChild(empty);
+  } else {
+    for (const a of state.alarms) {
+      const lvl = ['critical', 'warn', 'info'].includes(a.level) ? a.level : 'info';
+      const row = document.createElement('div');
+      row.className = `alarm-row alarm-${lvl}`;
+      const tsSpan = document.createElement('span');
+      tsSpan.textContent = `[${a.ts || ''}]`;
+      const msgSpan = document.createElement('span');
+      msgSpan.textContent = String(a.message || '');
+      row.appendChild(tsSpan);
+      row.appendChild(msgSpan);
+      al.appendChild(row);
+    }
+  }
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/api/state');
+    if (res.ok) renderHMI(await res.json());
+  } catch (e) {}
+  setTimeout(poll, 250);
+}
+poll();
+</script>
+</body>
+</html>

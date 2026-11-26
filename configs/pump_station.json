@@ -1,0 +1,134 @@
+{
+  "version": "1.0.0",
+  "device": {
+    "name": "AQUACONTROL HMI / 01",
+    "width": 800,
+    "height": 480,
+    "theme": "dark",
+    "poll_interval_ms": 250,
+    "watchdog_timeout_s": 10,
+    "engineer_pin": "1234",
+    "api_token": "edgehmi-secret-2026"
+  },
+  "modbus": {
+    "port": 1,
+    "baudrate": 9600,
+    "tx_pin": 17,
+    "rx_pin": 18,
+    "de_pin": 16,
+    "timeout_ms": 300,
+    "points": [
+      { "tag": "tank_level",   "slave": 1, "fc": 3, "addr": 100, "type": "u16",  "scale": 0.1,  "offset": 0, "unit": "%",    "rw": "r",  "default": 68.0 },
+      { "tag": "pump_rpm",     "slave": 1, "fc": 3, "addr": 101, "type": "u16",  "scale": 1.0,  "offset": 0, "unit": "rpm",  "rw": "r",  "default": 1450 },
+      { "tag": "water_temp",   "slave": 1, "fc": 3, "addr": 102, "type": "i16",  "scale": 0.1,  "offset": 0, "unit": "C",    "rw": "r",  "default": 24.6 },
+      { "tag": "outlet_flow",  "slave": 1, "fc": 3, "addr": 103, "type": "u16",  "scale": 0.1,  "offset": 0, "unit": "m3/h", "rw": "r",  "default": 12.4 },
+      { "tag": "motor_curr",    "slave": 1, "fc": 3, "addr": 104, "type": "u16",  "scale": 0.1,  "offset": 0, "unit": "A",    "rw": "r",  "default": 3.8 },
+      { "tag": "total_flow_m3", "slave": 1, "fc": 3, "addr": 105, "type": "f32",  "byte_order": "CDAB", "scale": 1.0, "offset": 0, "unit": "m3", "rw": "r", "default": 1248.5 },
+      { "tag": "target_level",  "slave": 1, "fc": 3, "addr": 200, "type": "u16",  "scale": 0.1,  "offset": 0, "unit": "%",    "rw": "rw", "default": 75.0, "retentive": true },
+      { "tag": "pump_cmd",     "slave": 1, "fc": 1, "addr": 1,   "type": "bool", "scale": 1.0,  "offset": 0, "unit": "",     "rw": "rw", "default": 1 },
+      { "tag": "auto_mode",    "slave": 1, "fc": 1, "addr": 2,   "type": "bool", "scale": 1.0,  "offset": 0, "unit": "",     "rw": "rw", "default": 1, "retentive": true },
+      { "tag": "high_alarm",   "slave": 1, "fc": 1, "addr": 10,  "type": "bool", "scale": 1.0,  "offset": 0, "unit": "",     "rw": "rw", "default": 0 }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_high_level_stop",
+      "desc": "水箱高液位联锁停泵（含3%回差防抖）",
+      "enabled": true,
+      "when": { "tag": "tank_level", "op": ">=", "value": 92.0, "hysteresis": 3.0, "debounce_ms": 500 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
+    },
+    {
+      "id": "rule_high_level_alarm",
+      "desc": "高液位声光告警",
+      "enabled": true,
+      "when": { "tag": "tank_level", "op": ">=", "value": 90.0, "hysteresis": 2.0, "debounce_ms": 300 },
+      "then": { "action": "alarm", "level": "warn", "message": "Tank T-01 high water level (>=90%)" }
+    },
+    {
+      "id": "rule_overcurrent_trip",
+      "desc": "水泵电机过流急停保护（强制联锁锁定）",
+      "enabled": true,
+      "enforce": true,
+      "when": { "tag": "motor_curr", "op": ">", "value": 8.5, "hysteresis": 0.5, "debounce_ms": 200 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
+    },
+    {
+      "id": "rule_overcurrent_alarm",
+      "desc": "电机过流严重告警",
+      "enabled": true,
+      "when": { "tag": "motor_curr", "op": ">", "value": 8.5, "hysteresis": 0.5, "debounce_ms": 200 },
+      "then": { "action": "alarm", "level": "critical", "message": "Motor P-01 overcurrent trip (>8.5A)" }
+    },
+    {
+      "id": "rule_auto_low_start",
+      "desc": "复合联锁：自动模式开启且低液位(<=35%)自动启泵",
+      "enabled": true,
+      "when": {
+        "all": [
+          { "tag": "auto_mode", "op": "==", "value": 1 },
+          { "tag": "tank_level", "op": "<=", "value": 35.0, "hysteresis": 4.0 }
+        ],
+        "debounce_ms": 400
+      },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 1 }
+    },
+    {
+      "id": "rule_comm_loss_stop",
+      "desc": "RS485通讯中断Fail-Safe安全停泵（强制联锁锁定）",
+      "enabled": true,
+      "enforce": true,
+      "when": { "on_comm_loss": true, "tag": "tank_level", "debounce_ms": 300 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
+    },
+    {
+      "id": "rule_comm_loss_alarm",
+      "desc": "RS485通讯中断严重告警",
+      "enabled": true,
+      "when": { "on_comm_loss": true, "tag": "tank_level", "debounce_ms": 300 },
+      "then": { "action": "alarm", "level": "critical", "message": "RS485 Comm Loss — Fail-Safe pump stop!" }
+    }
+  ],
+  "pages": [
+    {
+      "id": "overview",
+      "title": "Water Treatment Station — Overview",
+      "widgets": [
+        { "id": "title_lbl",   "type": "label",  "x": 24,  "y": 18,  "w": 360, "h": 34, "text": "Water Treatment Station (North Reservoir)" },
+        { "id": "pump_badge",  "type": "badge",  "x": 640, "y": 16,  "w": 136, "h": 32, "bind": "pump_cmd", "color": "#10B981", "true_text": "PUMP RUNNING", "false_text": "PUMP STOPPED" },
+
+        { "id": "card_tank",   "type": "card",   "x": 24,  "y": 64,  "w": 430, "h": 310, "text": "TANK T-01 PROCESS MONITOR" },
+        { "id": "gauge_level", "type": "gauge",  "x": 50,  "y": 110, "w": 180, "h": 180, "bind": "tank_level", "unit": "%", "min": 0, "max": 100, "decimals": 1, "color": "#2DD4BF" },
+        { "id": "lbl_rpm",     "type": "label",  "x": 260, "y": 120, "w": 160, "h": 24, "text": "Pump Speed" },
+        { "id": "val_rpm",     "type": "value",  "x": 260, "y": 148, "w": 160, "h": 36, "bind": "pump_rpm", "unit": "rpm", "decimals": 0, "color": "#38BDF8" },
+        { "id": "lbl_curr",    "type": "label",  "x": 260, "y": 205, "w": 160, "h": 24, "text": "Motor Current" },
+        { "id": "val_curr",    "type": "value",  "x": 260, "y": 233, "w": 160, "h": 36, "bind": "motor_curr", "unit": "A", "decimals": 1, "color": "#F59E0B" },
+        { "id": "bar_level",   "type": "bar",    "x": 50,  "y": 322, "w": 376, "h": 22, "bind": "tank_level", "min": 0, "max": 100, "color": "#2DD4BF" },
+
+        { "id": "card_telem",  "type": "card",   "x": 474, "y": 64,  "w": 302, "h": 310, "text": "LIVE TELEMETRY" },
+        { "id": "lbl_temp",    "type": "label",  "x": 496, "y": 104, "w": 220, "h": 22, "text": "Water Temperature" },
+        { "id": "val_temp",    "type": "value",  "x": 496, "y": 130, "w": 220, "h": 36, "bind": "water_temp", "unit": "C", "decimals": 1, "color": "#34D399" },
+        { "id": "lbl_flow",    "type": "label",  "x": 496, "y": 182, "w": 220, "h": 22, "text": "Outlet Flow Rate" },
+        { "id": "val_flow",    "type": "value",  "x": 496, "y": 208, "w": 220, "h": 36, "bind": "outlet_flow", "unit": "m3/h", "decimals": 1, "color": "#38BDF8" },
+        { "id": "chart_flow",  "type": "chart",  "x": 496, "y": 258, "w": 258, "h": 96, "bind": "outlet_flow", "min": 0, "max": 25, "color": "#2DD4BF" },
+
+        { "id": "btn_start",   "type": "button", "x": 24,  "y": 396, "w": 156, "h": 54, "text": "START PUMP", "bind": "pump_cmd", "write_value": 1, "color": "#10B981" },
+        { "id": "btn_stop",    "type": "button", "x": 196, "y": 396, "w": 156, "h": 54, "text": "STOP PUMP",  "bind": "pump_cmd", "write_value": 0, "color": "#EF4444", "confirm": true, "confirm_text": "确认紧急停止 1 号水泵（P-01）？", "pin_required": true },
+        { "id": "lbl_auto",    "type": "label",  "x": 384, "y": 412, "w": 110, "h": 26, "text": "Auto Mode" },
+        { "id": "sw_auto",     "type": "switch", "x": 494, "y": 407, "w": 64,  "h": 34, "bind": "auto_mode", "color": "#2DD4BF" },
+        { "id": "btn_diag",    "type": "button", "x": 604, "y": 396, "w": 172, "h": 54, "text": "DIAGNOSTICS ->", "nav_page": "diagnostics", "color": "#334155" }
+      ]
+    },
+    {
+      "id": "diagnostics",
+      "title": "Station Diagnostics",
+      "widgets": [
+        { "id": "diag_title",  "type": "label",  "x": 24,  "y": 18,  "w": 360, "h": 34, "text": "Station Diagnostics — Pump P-01" },
+        { "id": "diag_card",   "type": "card",   "x": 24,  "y": 64,  "w": 752, "h": 300, "text": "MOTOR CURRENT & LEVEL TREND" },
+        { "id": "diag_curr",   "type": "value",  "x": 50,  "y": 116, "w": 220, "h": 42, "bind": "motor_curr", "unit": "A", "decimals": 2, "color": "#F59E0B" },
+        { "id": "diag_chart",  "type": "chart",  "x": 50,  "y": 176, "w": 700, "h": 160, "bind": "tank_level", "min": 0, "max": 100, "color": "#38BDF8" },
+        { "id": "btn_back",    "type": "button", "x": 24,  "y": 396, "w": 200, "h": 54, "text": "<- PROCESS OVERVIEW", "nav_page": "overview", "color": "#334155" }
+      ]
+    }
+  ]
+}

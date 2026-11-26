@@ -1,0 +1,17 @@
+# Production Industrial Security Hardening Overlay
+# Usage: idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.prod" build
+
+# Hardware Secure Boot v2 (RSA-3072 / ECDSA)
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+
+# Hardware Flash Encryption (Release Mode)
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+
+# NVS Encryption for Wi-Fi / MQTT credentials
+CONFIG_NVS_ENCRYPTION=y
+
+# Disable UART ROM download mode in production
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y

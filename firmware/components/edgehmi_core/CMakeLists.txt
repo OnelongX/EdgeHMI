@@ -1,0 +1,13 @@
+idf_component_register(
+    SRCS
+        "src/data_bus.c"
+        "src/modbus_rtu.c"
+        "src/rule_engine.c"
+        "src/config_loader.c"
+        "src/ota_package.c"
+        "src/discovery_proto.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        json
+)

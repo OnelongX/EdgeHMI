@@ -1,0 +1,24 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "ui_engine_lvgl.c"
+        "ota_config.c"
+        "ota_firmware.c"
+        "discovery_service.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        edgehmi_core
+        driver
+        esp_http_server
+        esp_http_client
+        esp_https_ota
+        app_update
+        esp_wifi
+        lwip
+        mdns
+        nvs_flash
+        esp_timer
+        lvgl
+        littlefs
+)

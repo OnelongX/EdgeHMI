@@ -1,0 +1,101 @@
+{
+  "version": "1.0.0",
+  "device": {
+    "name": "SOLAR-EDGE HMI / PV-01",
+    "width": 800,
+    "height": 480,
+    "theme": "dark",
+    "poll_interval_ms": 250,
+    "watchdog_timeout_s": 10,
+    "engineer_pin": "1234",
+    "api_token": "edgehmi-secret-2026"
+  },
+  "modbus": {
+    "port": 1,
+    "baudrate": 9600,
+    "tx_pin": 17,
+    "rx_pin": 18,
+    "de_pin": 16,
+    "timeout_ms": 300,
+    "points": [
+      { "tag": "pv_power_w",    "slave": 1, "fc": 3, "addr": 3000, "type": "u16",  "scale": 1.0, "offset": 0, "unit": "W",  "rw": "r",  "default": 3420 },
+      { "tag": "grid_power_w",  "slave": 1, "fc": 3, "addr": 3001, "type": "i16",  "scale": 1.0, "offset": 0, "unit": "W",  "rw": "r",  "default": 180 },
+      { "tag": "batt_soc",      "slave": 1, "fc": 3, "addr": 3002, "type": "u16",  "scale": 0.1, "offset": 0, "unit": "%",  "rw": "r",  "default": 82.5 },
+      { "tag": "inv_temp_c",      "slave": 1, "fc": 3, "addr": 3003, "type": "i16",  "scale": 0.1, "offset": 0, "unit": "C",   "rw": "r",  "default": 44.2 },
+      { "tag": "daily_yield_kwh", "slave": 1, "fc": 3, "addr": 3004, "type": "f32",  "byte_order": "CDAB", "scale": 1.0, "offset": 0, "unit": "kWh", "rw": "r", "default": 18.6 },
+      { "tag": "power_limit",     "slave": 1, "fc": 3, "addr": 4000, "type": "u16",  "scale": 1.0, "offset": 0, "unit": "%",   "rw": "rw", "default": 100, "retentive": true },
+      { "tag": "zero_export",   "slave": 1, "fc": 1, "addr": 10,   "type": "bool", "scale": 1.0, "offset": 0, "unit": "",   "rw": "rw", "default": 1,   "retentive": true },
+      { "tag": "inv_enable",    "slave": 1, "fc": 1, "addr": 11,   "type": "bool", "scale": 1.0, "offset": 0, "unit": "",   "rw": "rw", "default": 1 }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_anti_backflow",
+      "desc": "复合防逆流保护：防逆流开关开启且向电网倒送电(>50W)时限功率至60%",
+      "enabled": true,
+      "enforce": true,
+      "when": {
+        "all": [
+          { "tag": "zero_export", "op": "==", "value": 1 },
+          { "tag": "grid_power_w", "op": "<", "value": -50.0, "hysteresis": 30.0 }
+        ],
+        "debounce_ms": 400
+      },
+      "then": { "action": "set_tag", "target_tag": "power_limit", "value": 60 }
+    },
+    {
+      "id": "rule_meter_comm_loss",
+      "desc": "电表RS485断线Fail-Safe降额至30%",
+      "enabled": true,
+      "enforce": true,
+      "when": { "on_comm_loss": true, "tag": "grid_power_w", "debounce_ms": 300 },
+      "then": { "action": "set_tag", "target_tag": "power_limit", "value": 30 }
+    },
+    {
+      "id": "rule_overtemp_derate",
+      "desc": "逆变器过温(>65C)降额保护",
+      "enabled": true,
+      "when": { "tag": "inv_temp_c", "op": ">=", "value": 65.0, "hysteresis": 4.0, "debounce_ms": 500 },
+      "then": { "action": "set_tag", "target_tag": "power_limit", "value": 50 }
+    },
+    {
+      "id": "rule_overtemp_alarm",
+      "desc": "逆变器高温告警",
+      "enabled": true,
+      "when": { "tag": "inv_temp_c", "op": ">=", "value": 65.0, "hysteresis": 4.0, "debounce_ms": 500 },
+      "then": { "action": "alarm", "level": "critical", "message": "Inverter heatsink over-temperature (>=65C)" }
+    }
+  ],
+  "pages": [
+    {
+      "id": "solar",
+      "title": "Solar PV & Storage Monitor",
+      "widgets": [
+        { "id": "pv_title",    "type": "label",  "x": 24,  "y": 18,  "w": 420, "h": 34, "text": "Solar PV + BESS Edge Controller" },
+        { "id": "inv_badge",   "type": "badge",  "x": 640, "y": 16,  "w": 136, "h": 32, "bind": "inv_enable", "color": "#10B981", "true_text": "ON-GRID", "false_text": "STANDBY" },
+
+        { "id": "card_pv",     "type": "card",   "x": 24,  "y": 64,  "w": 370, "h": 310, "text": "PV GENERATION & POWER LIMIT" },
+        { "id": "gauge_pv",    "type": "gauge",  "x": 48,  "y": 110, "w": 170, "h": 170, "bind": "pv_power_w", "unit": "W", "min": 0, "max": 5000, "decimals": 0, "color": "#F59E0B" },
+        { "id": "lbl_grid",    "type": "label",  "x": 236, "y": 122, "w": 140, "h": 24, "text": "Grid Import (+)" },
+        { "id": "val_grid",    "type": "value",  "x": 236, "y": 150, "w": 140, "h": 36, "bind": "grid_power_w", "unit": "W", "decimals": 0, "color": "#38BDF8" },
+        { "id": "lbl_lim",     "type": "label",  "x": 236, "y": 205, "w": 140, "h": 24, "text": "Power Limit" },
+        { "id": "val_lim",     "type": "value",  "x": 236, "y": 233, "w": 140, "h": 36, "bind": "power_limit", "unit": "%", "decimals": 0, "color": "#2DD4BF" },
+        { "id": "bar_lim",     "type": "bar",    "x": 48,  "y": 320, "w": 322, "h": 22, "bind": "power_limit", "min": 0, "max": 100, "color": "#F59E0B" },
+
+        { "id": "card_bess",   "type": "card",   "x": 414, "y": 64,  "w": 362, "h": 310, "text": "BATTERY BMS & THERMAL" },
+        { "id": "lbl_soc",     "type": "label",  "x": 438, "y": 104, "w": 150, "h": 22, "text": "Battery SOC" },
+        { "id": "val_soc",     "type": "value",  "x": 438, "y": 130, "w": 150, "h": 36, "bind": "batt_soc", "unit": "%", "decimals": 1, "color": "#10B981" },
+        { "id": "lbl_itmp",    "type": "label",  "x": 610, "y": 104, "w": 150, "h": 22, "text": "Heatsink Temp" },
+        { "id": "val_itmp",    "type": "value",  "x": 610, "y": 130, "w": 150, "h": 36, "bind": "inv_temp_c", "unit": "C", "decimals": 1, "color": "#F43F5E" },
+        { "id": "bar_soc",     "type": "bar",    "x": 438, "y": 182, "w": 314, "h": 20, "bind": "batt_soc", "min": 0, "max": 100, "color": "#10B981" },
+        { "id": "chart_pv",    "type": "chart",  "x": 438, "y": 224, "w": 314, "h": 130, "bind": "pv_power_w", "min": 0, "max": 5000, "color": "#F59E0B" },
+
+        { "id": "btn_100",     "type": "button", "x": 24,  "y": 396, "w": 150, "h": 54, "text": "LIMIT 100%", "bind": "power_limit", "write_value": 100, "color": "#10B981" },
+        { "id": "btn_50",      "type": "button", "x": 190, "y": 396, "w": 150, "h": 54, "text": "DERATE 50%", "bind": "power_limit", "write_value": 50,  "color": "#F59E0B" },
+        { "id": "lbl_zexp",    "type": "label",  "x": 370, "y": 412, "w": 120, "h": 26, "text": "Zero-Export" },
+        { "id": "sw_zexp",     "type": "switch", "x": 490, "y": 407, "w": 64,  "h": 34, "bind": "zero_export", "color": "#2DD4BF" },
+        { "id": "btn_trip",    "type": "button", "x": 604, "y": 396, "w": 172, "h": 54, "text": "STOP INVERTER", "bind": "inv_enable", "write_value": 0, "color": "#EF4444", "confirm": true, "confirm_text": "确认关停并网逆变器发电输出？", "pin_required": true }
+      ]
+    }
+  ]
+}
