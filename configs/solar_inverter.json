@@ -41,6 +41,22 @@
   "calc_tags": [
     { "tag": "bms_power_w", "op": "mul", "src_a": "bms_pack_v", "src_b": "bms_pack_curr", "scale": 1.0, "unit": "W" }
   ],
+  "network": {
+    "ap_fallback": true,
+    "failover_policy": "wifi_primary",
+    "cellular": {
+      "enabled": true,
+      "generation": "5g_redcap",
+      "interface": "uart_ppp",
+      "apn": "cmnet",
+      "uart_port": 2,
+      "baudrate": 921600,
+      "tx_pin": 13,
+      "rx_pin": 14,
+      "pwrkey_pin": -1,
+      "reset_pin": -1
+    }
+  },
   "rules": [
     {
       "id": "rule_anti_backflow",

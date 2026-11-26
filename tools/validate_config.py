@@ -28,6 +28,9 @@ VALID_WIDGETS = {
 }
 VALID_IO_MODES = {"di", "do", "adc", "pwm"}
 VALID_CALC_OPS = {"add", "sub", "mul", "div", "avg", "integrate"}
+VALID_NET_POLICIES = {"wifi_only", "cellular_only", "wifi_primary", "cellular_primary"}
+VALID_CELL_GENS = {"auto", "4g", "5g", "5g_redcap"}
+VALID_CELL_IFACES = {"uart_ppp", "usb_ecm"}
 
 
 def plan_modbus_blocks(
@@ -112,6 +115,25 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
         pin = dev.get("engineer_pin")
         if pin is not None and (not isinstance(pin, str) or not re.match(r"^[0-9]{4,8}$", pin)):
             errors.append("device.engineer_pin must be a 4-8 digit string")
+
+    # 1b. Network & 4G/5G Cellular Validation
+    net = cfg.get("network", {})
+    if isinstance(net, dict):
+        pol = net.get("failover_policy")
+        if pol is not None and pol not in VALID_NET_POLICIES:
+            errors.append(f"network.failover_policy invalid: '{pol}'")
+        cell = net.get("cellular", {})
+        if isinstance(cell, dict):
+            gen = cell.get("generation")
+            if gen is not None and gen not in VALID_CELL_GENS:
+                errors.append(f"network.cellular.generation invalid: '{gen}'")
+            iface = cell.get("interface")
+            if iface is not None and iface not in VALID_CELL_IFACES:
+                errors.append(f"network.cellular.interface invalid: '{iface}'")
+            for pfield in ("tx_pin", "rx_pin", "rts_pin", "cts_pin", "pwrkey_pin", "reset_pin"):
+                pv = cell.get(pfield)
+                if pv is not None and not (isinstance(pv, int) and -1 <= pv <= 48):
+                    errors.append(f"network.cellular.{pfield} ({pv}) must be in [-1, 48]")
 
     # 2. Modbus Points
     mb = cfg.get("modbus", {})

@@ -183,6 +183,7 @@
     <h1>EdgeHMI Studio v2.0 · ESP32-S3 全栈工业组态与边缘仿真 IDE</h1>
     <div class="meta">
       <span class="pill accent" id="mb-pill">Modbus Block Read: --</span>
+      <span class="pill" id="wan-pill">WAN: Wi-Fi</span>
       <span class="pill" id="mem-pill">SRAM: -- | PSRAM FB: --</span>
       <span class="pill" id="nvs-pill">NVS: 0 saved</span>
       <span class="pill mirror" id="mirror-pill" style="display:none;">LIVE MIRROR</span>
@@ -226,6 +227,7 @@
             <button class="ctrl-btn danger" onclick="injectFault('grid_power_w', -180)">注入逆流 -180W</button>
             <button class="ctrl-btn danger" onclick="injectFault('inv_temp_c', 68.5)">注入高温 68.5C</button>
             <button class="ctrl-btn danger" id="btn-comm-loss" onclick="toggleCommLoss()">模拟 RS485 断线</button>
+            <button class="ctrl-btn" id="btn-wan-failover" onclick="toggleWifiFailover()">模拟 Wi-Fi 断网切 4G/5G</button>
             <button class="ctrl-btn" onclick="clearNvs()">清空 NVS</button>
             <a class="ctrl-btn primary" href="/api/history.csv" download="edgehmi_history.csv" style="text-decoration:none;">下载历史 CSV</a>
           </div>
@@ -883,6 +885,17 @@ async function toggleCommLoss() {
   setStatus(next ? '已模拟 RS485 断线 — 触发 Fail-Safe 安全联锁！' : '已恢复 RS485 通讯', next ? '#f87171' : '#34d399');
 }
 
+async function toggleWifiFailover() {
+  const wifiNow = lastState?.wan ? !!lastState.wan.wifi_online : true;
+  const r = await postJson('/api/wan/failover', { wifi_online: !wifiNow });
+  if (r.data.ok) {
+    const w = r.data.wan;
+    setStatus(w.active_link === 'cellular'
+      ? `Wi-Fi 断网已自动切换至 ${w.rat} (${w.rssi_dbm} dBm, APN=${w.apn})`
+      : `Wi-Fi 已恢复，主链路切回 Wi-Fi`, w.active_link === 'cellular' ? '#f59e0b' : '#34d399');
+  }
+}
+
 async function ackAllAlarms() {
   const r = await postJson('/api/alarms/ack', { id: 0 }, authHeaders());
   setStatus(r.data.ok ? `已确认 ${r.data.acked} 条告警记录` : `确认失败：${r.data.message}`, r.data.ok ? '#34d399' : '#f87171');
@@ -1099,6 +1112,24 @@ function renderHMI(state, forceRedraw = false) {
     `SRAM ~${state.stats.est_sram_kb} KB | PSRAM FB ~${state.stats.est_fb_psram_kb} KB`;
   document.getElementById('nvs-pill').textContent =
     `NVS: ${Object.keys(state.nvs || {}).length} saved`;
+  if (state.wan) {
+    const wp = document.getElementById('wan-pill');
+    const wb = document.getElementById('btn-wan-failover');
+    if (state.wan.active_link === 'cellular') {
+      wp.textContent = `WAN: ${state.wan.rat} (${state.wan.rssi_dbm} dBm)`;
+      wp.style.borderColor = '#f59e0b';
+      wp.style.color = '#fde68a';
+    } else if (state.wan.active_link === 'wifi') {
+      wp.textContent = `WAN: Wi-Fi (${state.wan.cellular_enabled ? state.wan.rat + ' Standby' : 'Only'})`;
+      wp.style.borderColor = '#10b981';
+      wp.style.color = '#6ee7b7';
+    } else {
+      wp.textContent = 'WAN: OFFLINE';
+      wp.style.borderColor = '#ef4444';
+      wp.style.color = '#fca5a5';
+    }
+    if (wb) wb.textContent = state.wan.wifi_online ? '模拟 Wi-Fi 断网切 4G/5G' : '恢复 Wi-Fi 主链路';
+  }
 
   if (!editorLoaded) { syncEditor(); editorLoaded = true; }
 

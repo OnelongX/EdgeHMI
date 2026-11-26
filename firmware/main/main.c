@@ -1,4 +1,5 @@
 #include "calc_engine.h"
+#include "cellular_modem.h"
 #include "cloud_mqtt.h"
 #include "config_loader.h"
 #include "data_bus.h"
@@ -409,8 +410,9 @@ void app_main(void) {
         }
     }
 
-    /* Core 0: Wi-Fi/SoftAP/4G + HTTP/OTA/Historian + Cloud MQTT + LAN discovery */
-    edgehmi_net_start(&s_active_cfg);
+    /* Core 0: Wi-Fi/SoftAP + 4G/5G PPPoS Failover + HTTP/OTA/Historian + Cloud MQTT + LAN discovery */
+    esp_netif_t *wifi_sta = edgehmi_net_start(&s_active_cfg);
+    edgehmi_cellular_start(&s_active_cfg, wifi_sta, s_cfg_mutex);
     edgehmi_http_start(&s_bus, &s_active_cfg, &s_mb_stats, &s_history, s_cfg_mutex, reload_config_atomic);
     edgehmi_discovery_start(&s_active_cfg, &s_bus, s_cfg_mutex, 80);
     edgehmi_cloud_mqtt_start(&s_active_cfg, &s_bus, s_cfg_mutex);

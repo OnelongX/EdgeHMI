@@ -237,7 +237,14 @@ def main() -> int:
             code, mir_ok = req_json("POST", "/api/fleet/mirror_tags", {"target_url": BASE}, token=TOKEN)
             assert code == 200 and isinstance(mir_ok.get("tags"), list) and len(mir_ok["tags"]) > 0
 
-            print("ALL FULL STUDIO v2.0 + OTA + DISCOVERY + SECURITY + HISTORIAN E2E TESTS PASSED.")
+            # 9. 4G/5G Multi-Link WAN Failover (Wi-Fi outage -> 5G RedCap -> Wi-Fi recovery)
+            code, w_fail = req_json("POST", "/api/wan/failover", {"wifi_online": False})
+            assert code == 200 and w_fail["wan"]["active_link"] == "cellular"
+            assert w_fail["wan"]["rat"] == "5G RedCap", f"Expected 5G RedCap, got {w_fail['wan']}"
+            code, w_rec = req_json("POST", "/api/wan/failover", {"wifi_online": True})
+            assert code == 200 and w_rec["wan"]["active_link"] == "wifi"
+
+            print("ALL FULL STUDIO v2.2 + 4G/5G + OTA + DISCOVERY + SECURITY + HISTORIAN E2E TESTS PASSED.")
             return 0
         finally:
             proc.terminate()

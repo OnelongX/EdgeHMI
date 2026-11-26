@@ -150,9 +150,30 @@
         "wifi_ssid": { "type": "string", "maxLength": 32 },
         "wifi_password": { "type": "string", "maxLength": 64 },
         "ap_fallback": { "type": "boolean" },
+        "failover_policy": { "type": "string", "enum": ["wifi_only", "cellular_only", "wifi_primary", "cellular_primary"] },
         "modem_4g_enabled": { "type": "boolean" },
         "modem_tx_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
-        "modem_rx_pin": { "type": "integer", "minimum": -1, "maximum": 48 }
+        "modem_rx_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
+        "cellular": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "generation": { "type": "string", "enum": ["auto", "4g", "5g", "5g_redcap"] },
+            "interface": { "type": "string", "enum": ["uart_ppp", "usb_ecm"] },
+            "apn": { "type": "string", "maxLength": 48 },
+            "apn_user": { "type": "string", "maxLength": 32 },
+            "apn_pass": { "type": "string", "maxLength": 32 },
+            "sim_pin": { "type": "string", "maxLength": 12 },
+            "uart_port": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "baudrate": { "type": "integer", "enum": [115200, 230400, 460800, 921600, 1500000, 3000000] },
+            "tx_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
+            "rx_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
+            "rts_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
+            "cts_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
+            "pwrkey_pin": { "type": "integer", "minimum": -1, "maximum": 48 },
+            "reset_pin": { "type": "integer", "minimum": -1, "maximum": 48 }
+          }
+        }
       }
     },
     "rules": {

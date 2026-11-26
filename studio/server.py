@@ -56,7 +56,10 @@ class IndustrialRuntime:
         self.next_alarm_id: int = 1
         self.fault_overrides: dict[str, tuple[float, float]] = {}
         self.comm_loss: bool = False
-        self.fw_version: str = "1.1.0"
+        self.wifi_online: bool = True
+        self.cell_online: bool = True
+        self.cell_rssi_dbm: int = -71
+        self.fw_version: str = "2.2.0"
         self.device_id: str = os.environ.get("EDGEHMI_DEVICE_ID", "edgehmi-sim001")
         self.http_port: int = 8765
         self.start_ts: float = time.time()
@@ -273,6 +276,48 @@ class IndustrialRuntime:
             if force:
                 self.fault_overrides[tag] = (float(value), time.time() + 4.0)
             return 200, True, "ok"
+
+    def set_wan_state(self, wifi_online: bool | None = None, cell_online: bool | None = None) -> dict[str, Any]:
+        with self.lock:
+            if wifi_online is not None:
+                self.wifi_online = bool(wifi_online)
+            if cell_online is not None:
+                self.cell_online = bool(cell_online)
+            info = self._wan_status_unlocked()
+            self._add_alarm(
+                "wan",
+                "warn" if info["active_link"] == "cellular" else ("critical" if info["active_link"] == "offline" else "info"),
+                f"WAN link switched -> {info['active_link'].upper()} ({info['rat']} {info['rssi_dbm']} dBm, APN={info['apn']})",
+            )
+            return info
+
+    def _wan_status_unlocked(self) -> dict[str, Any]:
+        net = self.config.get("network", {})
+        cell = net.get("cellular", {})
+        pol = net.get("failover_policy", "wifi_primary")
+        cell_en = bool(cell.get("enabled", False))
+        gen = cell.get("generation", "4g")
+        rat_map = {"4g": "4G Cat.1", "5g": "5G SA", "5g_redcap": "5G RedCap", "auto": "5G/4G Auto"}
+        rat = rat_map.get(gen, "4G LTE") if (cell_en and self.cell_online) else "OFFLINE"
+        if pol == "cellular_only":
+            active = "cellular" if (cell_en and self.cell_online) else "offline"
+        elif pol == "wifi_only":
+            active = "wifi" if self.wifi_online else "offline"
+        elif pol == "cellular_primary":
+            active = "cellular" if (cell_en and self.cell_online) else ("wifi" if self.wifi_online else "offline")
+        else:
+            active = "wifi" if self.wifi_online else ("cellular" if (cell_en and self.cell_online) else "offline")
+        return {
+            "policy": pol,
+            "active_link": active,
+            "wifi_online": self.wifi_online,
+            "cellular_enabled": cell_en,
+            "cellular_online": cell_en and self.cell_online,
+            "rat": rat,
+            "interface": cell.get("interface", "uart_ppp"),
+            "apn": cell.get("apn", "cmnet"),
+            "rssi_dbm": self.cell_rssi_dbm if (cell_en and self.cell_online) else 0,
+        }
 
     def set_comm_loss(self, active: bool) -> None:
         with self.lock:
@@ -554,6 +599,7 @@ class IndustrialRuntime:
                 "auth_required": auth_required,
                 "stats": self.stats,
                 "comm_loss": self.comm_loss,
+                "wan": self._wan_status_unlocked(),
                 "fw_ver": self.fw_version,
                 "device_id": self.device_id,
                 "nvs": dict(self.nvs_store),
@@ -710,6 +756,16 @@ def make_handler(runtime: IndustrialRuntime):
                     data = json.loads(raw)
                     runtime.set_comm_loss(bool(data.get("active", False)))
                     self._send_json(200, {"ok": True, "comm_loss": runtime.comm_loss})
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "message": str(exc)})
+            elif self.path == "/api/wan/failover":
+                try:
+                    data = json.loads(raw)
+                    info = runtime.set_wan_state(
+                        wifi_online=data.get("wifi_online"),
+                        cell_online=data.get("cell_online"),
+                    )
+                    self._send_json(200, {"ok": True, "wan": info})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
             elif self.path == "/api/write":

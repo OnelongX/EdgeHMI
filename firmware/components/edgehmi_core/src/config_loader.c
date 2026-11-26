@@ -545,10 +545,21 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
         if (cJSON_IsNumber(jint) && jint->valueint >= 500) out_cfg->cloud.publish_interval_ms = (uint32_t)jint->valueint;
     }
 
-    /* optional: network (Wi-Fi + SoftAP fallback + 4G Cat.1 PPP modem) */
+    /* optional: network (Wi-Fi + SoftAP fallback + 4G Cat.1/Cat.4 & 5G RedCap/NR multi-link) */
     out_cfg->net.ap_fallback = true;
-    out_cfg->net.modem_tx_pin = -1;
-    out_cfg->net.modem_rx_pin = -1;
+    out_cfg->net.failover_policy = NET_POLICY_WIFI_PRIMARY;
+    out_cfg->net.cellular.generation = CELL_GEN_AUTO;
+    out_cfg->net.cellular.iface = CELL_IFACE_UART_PPP;
+    copy_str(out_cfg->net.cellular.apn, sizeof(out_cfg->net.cellular.apn), "cmnet");
+    out_cfg->net.cellular.uart_port = 2;
+    out_cfg->net.cellular.baudrate = 115200;
+    out_cfg->net.cellular.tx_pin = -1;
+    out_cfg->net.cellular.rx_pin = -1;
+    out_cfg->net.cellular.rts_pin = -1;
+    out_cfg->net.cellular.cts_pin = -1;
+    out_cfg->net.cellular.pwrkey_pin = -1;
+    out_cfg->net.cellular.reset_pin = -1;
+
     const cJSON *jnet = cJSON_GetObjectItemCaseSensitive(root, "network");
     if (cJSON_IsObject(jnet)) {
         const cJSON *jssid = cJSON_GetObjectItemCaseSensitive(jnet, "wifi_ssid");
@@ -557,12 +568,64 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
         if (cJSON_IsString(jwpwd)) copy_str(out_cfg->net.password, sizeof(out_cfg->net.password), jwpwd->valuestring);
         const cJSON *jap = cJSON_GetObjectItemCaseSensitive(jnet, "ap_fallback");
         if (cJSON_IsBool(jap)) out_cfg->net.ap_fallback = cJSON_IsTrue(jap);
+
+        const cJSON *jpol = cJSON_GetObjectItemCaseSensitive(jnet, "failover_policy");
+        if (cJSON_IsString(jpol)) {
+            if (strcmp(jpol->valuestring, "wifi_only") == 0) out_cfg->net.failover_policy = NET_POLICY_WIFI_ONLY;
+            else if (strcmp(jpol->valuestring, "cellular_only") == 0) out_cfg->net.failover_policy = NET_POLICY_CELLULAR_ONLY;
+            else if (strcmp(jpol->valuestring, "cellular_primary") == 0) out_cfg->net.failover_policy = NET_POLICY_CELLULAR_PRIMARY;
+            else out_cfg->net.failover_policy = NET_POLICY_WIFI_PRIMARY;
+        }
+
+        /* Backwards-compatible legacy 4G flat keys */
         const cJSON *j4g = cJSON_GetObjectItemCaseSensitive(jnet, "modem_4g_enabled");
-        out_cfg->net.modem_4g_enabled = cJSON_IsBool(j4g) && cJSON_IsTrue(j4g);
+        if (cJSON_IsBool(j4g) && cJSON_IsTrue(j4g)) out_cfg->net.cellular.enabled = true;
         const cJSON *jmtx = cJSON_GetObjectItemCaseSensitive(jnet, "modem_tx_pin");
-        if (cJSON_IsNumber(jmtx)) out_cfg->net.modem_tx_pin = (int8_t)jmtx->valueint;
+        if (cJSON_IsNumber(jmtx)) out_cfg->net.cellular.tx_pin = (int8_t)jmtx->valueint;
         const cJSON *jmrx = cJSON_GetObjectItemCaseSensitive(jnet, "modem_rx_pin");
-        if (cJSON_IsNumber(jmrx)) out_cfg->net.modem_rx_pin = (int8_t)jmrx->valueint;
+        if (cJSON_IsNumber(jmrx)) out_cfg->net.cellular.rx_pin = (int8_t)jmrx->valueint;
+
+        /* Structured 4G / 5G cellular configuration */
+        const cJSON *jcell = cJSON_GetObjectItemCaseSensitive(jnet, "cellular");
+        if (cJSON_IsObject(jcell)) {
+            const cJSON *jcen = cJSON_GetObjectItemCaseSensitive(jcell, "enabled");
+            if (cJSON_IsBool(jcen)) out_cfg->net.cellular.enabled = cJSON_IsTrue(jcen);
+            const cJSON *jgen = cJSON_GetObjectItemCaseSensitive(jcell, "generation");
+            if (cJSON_IsString(jgen)) {
+                if (strcmp(jgen->valuestring, "4g") == 0) out_cfg->net.cellular.generation = CELL_GEN_4G;
+                else if (strcmp(jgen->valuestring, "5g") == 0) out_cfg->net.cellular.generation = CELL_GEN_5G;
+                else if (strcmp(jgen->valuestring, "5g_redcap") == 0) out_cfg->net.cellular.generation = CELL_GEN_5G_REDCAP;
+                else out_cfg->net.cellular.generation = CELL_GEN_AUTO;
+            }
+            const cJSON *jif = cJSON_GetObjectItemCaseSensitive(jcell, "interface");
+            if (cJSON_IsString(jif) && strcmp(jif->valuestring, "usb_ecm") == 0) {
+                out_cfg->net.cellular.iface = CELL_IFACE_USB_ECM;
+            }
+            const cJSON *japn = cJSON_GetObjectItemCaseSensitive(jcell, "apn");
+            if (cJSON_IsString(japn)) copy_str(out_cfg->net.cellular.apn, sizeof(out_cfg->net.cellular.apn), japn->valuestring);
+            const cJSON *jau = cJSON_GetObjectItemCaseSensitive(jcell, "apn_user");
+            if (cJSON_IsString(jau)) copy_str(out_cfg->net.cellular.apn_user, sizeof(out_cfg->net.cellular.apn_user), jau->valuestring);
+            const cJSON *japw = cJSON_GetObjectItemCaseSensitive(jcell, "apn_pass");
+            if (cJSON_IsString(japw)) copy_str(out_cfg->net.cellular.apn_pass, sizeof(out_cfg->net.cellular.apn_pass), japw->valuestring);
+            const cJSON *jspin = cJSON_GetObjectItemCaseSensitive(jcell, "sim_pin");
+            if (cJSON_IsString(jspin)) copy_str(out_cfg->net.cellular.sim_pin, sizeof(out_cfg->net.cellular.sim_pin), jspin->valuestring);
+            const cJSON *jup = cJSON_GetObjectItemCaseSensitive(jcell, "uart_port");
+            if (cJSON_IsNumber(jup)) out_cfg->net.cellular.uart_port = (uint8_t)jup->valueint;
+            const cJSON *jbr = cJSON_GetObjectItemCaseSensitive(jcell, "baudrate");
+            if (cJSON_IsNumber(jbr) && jbr->valueint >= 9600) out_cfg->net.cellular.baudrate = (uint32_t)jbr->valueint;
+            const cJSON *jtx2 = cJSON_GetObjectItemCaseSensitive(jcell, "tx_pin");
+            if (cJSON_IsNumber(jtx2)) out_cfg->net.cellular.tx_pin = (int8_t)jtx2->valueint;
+            const cJSON *jrx2 = cJSON_GetObjectItemCaseSensitive(jcell, "rx_pin");
+            if (cJSON_IsNumber(jrx2)) out_cfg->net.cellular.rx_pin = (int8_t)jrx2->valueint;
+            const cJSON *jrts = cJSON_GetObjectItemCaseSensitive(jcell, "rts_pin");
+            if (cJSON_IsNumber(jrts)) out_cfg->net.cellular.rts_pin = (int8_t)jrts->valueint;
+            const cJSON *jcts = cJSON_GetObjectItemCaseSensitive(jcell, "cts_pin");
+            if (cJSON_IsNumber(jcts)) out_cfg->net.cellular.cts_pin = (int8_t)jcts->valueint;
+            const cJSON *jpk = cJSON_GetObjectItemCaseSensitive(jcell, "pwrkey_pin");
+            if (cJSON_IsNumber(jpk)) out_cfg->net.cellular.pwrkey_pin = (int8_t)jpk->valueint;
+            const cJSON *jrst = cJSON_GetObjectItemCaseSensitive(jcell, "reset_pin");
+            if (cJSON_IsNumber(jrst)) out_cfg->net.cellular.reset_pin = (int8_t)jrst->valueint;
+        }
     }
 
     /* rules */

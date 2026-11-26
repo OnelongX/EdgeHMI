@@ -7,6 +7,7 @@ idf_component_register(
         "discovery_service.c"
         "local_io.c"
         "fieldbus_ext.c"
+        "cellular_modem.c"
         "cloud_mqtt.c"
     INCLUDE_DIRS
         "."

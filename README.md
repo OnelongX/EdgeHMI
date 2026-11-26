@@ -8,7 +8,8 @@
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.x-E7352C?style=for-the-badge&logo=espressif&logoColor=white)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
 [![LVGL](https://img.shields.io/badge/LVGL-9.x-0EA5E9?style=for-the-badge)](https://lvgl.io/)
 [![Core](https://img.shields.io/badge/Core-Pure%20C11%20Zero--GC-14B8A6?style=for-the-badge)](firmware/components/edgehmi_core)
-[![Protocol](https://img.shields.io/badge/Fieldbus-Modbus%20RTU-F59E0B?style=for-the-badge)](firmware/components/edgehmi_core/src/modbus_rtu.c)
+[![Protocol](https://img.shields.io/badge/Fieldbus-Modbus%20%2B%20CAN-F59E0B?style=for-the-badge)](firmware/components/edgehmi_core/src/modbus_rtu.c)
+[![WAN](https://img.shields.io/badge/WAN-Wi--Fi%20%2B%204G%20%2B%205G%20RedCap-8B5CF6?style=for-the-badge)](firmware/main/cellular_modem.c)
 [![OTA](https://img.shields.io/badge/OTA-Push%20%2F%20Pull%20%2F%20EPK1-10B981?style=for-the-badge)](firmware/main/ota_firmware.c)
 [![Tests](https://img.shields.io/badge/Tests-C11%20%2B%20E2E%20Passing-22C55E?style=for-the-badge)](tests)
 
@@ -31,7 +32,7 @@
 | **开箱即用 BSP** | 内置 `edgehmi_bsp`（`menuconfig` 一键选板：**Waveshare 4.3" / Sunton 8048S043 / 8048S070**，PSRAM 防撕裂双缓冲 + GT911 + 背光 PWM） | 无需手写 RGB 时序，刷机即亮屏 |
 | **确定性联锁** | 支持单条件 / 复合 `AND` & `OR` / **RS485 断线 Fail-Safe**、滞环、去抖与**持续强制锁定（`enforce`）** | 故障未解除期间人工误合闸会被下一扫描周期立即重新拉停 |
 | **全栈无代码 IDE** | **Studio v2.0 六标签工控工作台**：14 种控件（含 `slider/spinbox/alarm_list/qrcode/image`）、Undo/Redo、**可视化点表与规则表单**、真机实时镜像、WebSerial 串口监控 | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，无需手写 JSON |
-| **云边协同 & 历史** | **Core 0 MQTT 遥测与断网环形缓存补传**、SoftAP/4G Cat.1 接入、本地历史采样（`GET /api/history.csv`）、告警确认（`POST /api/alarms/ack`） | 兼顾离线本地自治、甲方 CSV 报表导出与远程运维 |
+| **4G/5G 多链路云边协同** | **Core 0 内置 4G Cat.1/Cat.4 & 5G RedCap/NR PPPoS 驱动**（兼容 Air780E / EC200 / RG255C / RM500U / FM650 + USB OTG ECM 预留）与 **Wi-Fi ↔ 4G/5G 自动主备切换** + MQTT 断网补传 | 野外无 Wi-Fi 泵站/光伏站直连公网，主链路断网自动切 4G/5G 零中断 |
 | **中文子集 & OTA** | `tools/build_font.py` 自动扫描组态汉字裁剪 LVGL 9 字库（~21KB）；双模 OTA（配置原子热推 + 固件 Push/Pull/离线 `.epk`）+ UDP 56888 发现 | 极小 Flash 占用解决真机中文显示，支持局域网批量部署与崩退回滚 |
 
 ---

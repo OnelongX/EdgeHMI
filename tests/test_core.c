@@ -1,5 +1,6 @@
 #include "calc_engine.h"
 #include "can_codec.h"
+#include "cellular_proto.h"
 #include "config_loader.h"
 #include "data_bus.h"
 #include "discovery_proto.h"
@@ -522,6 +523,59 @@ static void test_modbus_tcp_and_can_and_history(void) {
     printf("  [PASS] test_modbus_tcp_and_can_and_history (MBAP + CAN BMS + CalcTags + Persistent CSV/Alarms)\n");
 }
 
+static void test_cellular_4g_5g_and_failover(void) {
+    /* 1. CSQ signal strength parsing -> dBm & bars */
+    int8_t dbm = 0;
+    uint8_t bars = 0;
+    assert(edgehmi_cell_parse_csq("\r\n+CSQ: 22,99\r\nOK\r\n", &dbm, &bars) == true);
+    assert(dbm == -69 && bars == 4);
+    assert(edgehmi_cell_parse_csq("+CSQ: 99,99", &dbm, &bars) == true && dbm == 0 && bars == 0);
+
+    /* 2. 4G (+CEREG) & 5G NR (+C5GREG) network registration parsing */
+    bool reg = false;
+    assert(edgehmi_cell_parse_reg("+C5GREG: 0,1\r\nOK", &reg) == true && reg == true);
+    assert(edgehmi_cell_parse_reg("+CEREG: 0,5\r\nOK", &reg) == true && reg == true);
+    assert(edgehmi_cell_parse_reg("+CEREG: 0,2\r\nOK", &reg) == true && reg == false);
+
+    /* 3. 5G SA / 5G RedCap / 4G LTE RAT & Operator detection */
+    edgehmi_cell_rat_t rat = CELL_RAT_NONE;
+    char oper[32] = {0};
+    assert(edgehmi_cell_parse_nwinfo("+QNWINFO: \"NR5G-SA\",\"46000\",\"NR5G BAND 78\",627264", &rat, oper, sizeof(oper)) == true);
+    assert(rat == CELL_RAT_5G_SA && strcmp(oper, "46000") == 0);
+    assert(edgehmi_cell_parse_nwinfo("+QNWINFO: \"NR5G-REDCAP\",\"46001\",\"NR5G BAND 41\",504990", &rat, oper, sizeof(oper)) == true);
+    assert(rat == CELL_RAT_5G_REDCAP && strcmp(oper, "46001") == 0);
+    assert(edgehmi_cell_parse_nwinfo("+CPSI: LTE,Online,460-00,0x1234", &rat, oper, sizeof(oper)) == true);
+    assert(rat == CELL_RAT_4G_LTE);
+
+    /* 4. SIM ICCID extraction & AT command builders */
+    char iccid[24] = {0};
+    assert(edgehmi_cell_parse_iccid("+QCCID: 89860412345678901234\r\nOK", iccid, sizeof(iccid)) == true);
+    assert(strcmp(iccid, "89860412345678901234") == 0);
+
+    char cmd[96];
+    assert(edgehmi_cell_build_apn_cmd("ctiot", cmd, sizeof(cmd)) > 0);
+    assert(strstr(cmd, "AT+CGDCONT=1,\"IP\",\"ctiot\"") != NULL);
+    assert(edgehmi_cell_build_rat_cmd(CELL_GEN_5G_REDCAP, cmd, sizeof(cmd)) > 0);
+    assert(strstr(cmd, "NR5G:LTE") != NULL);
+
+    /* 5. Deterministic Wi-Fi <-> 4G/5G multi-link failover + hysteresis failback */
+    edgehmi_wan_failover_t fm;
+    edgehmi_wan_failover_init(&fm, NET_POLICY_WIFI_PRIMARY);
+    assert(edgehmi_wan_failover_tick(&fm, true, true) == WAN_LINK_WIFI);
+    /* 2 consecutive Wi-Fi misses stay on Wi-Fi (debounce), 3rd switches to 4G/5G */
+    assert(edgehmi_wan_failover_tick(&fm, false, true) == WAN_LINK_WIFI);
+    assert(edgehmi_wan_failover_tick(&fm, false, true) == WAN_LINK_WIFI);
+    assert(edgehmi_wan_failover_tick(&fm, false, true) == WAN_LINK_CELLULAR);
+    assert(fm.switch_count == 2);
+    /* Wi-Fi recovery requires 5 consecutive healthy ticks (hysteresis prevents flapping) */
+    for (int i = 0; i < 4; ++i) {
+        assert(edgehmi_wan_failover_tick(&fm, true, true) == WAN_LINK_CELLULAR);
+    }
+    assert(edgehmi_wan_failover_tick(&fm, true, true) == WAN_LINK_WIFI);
+
+    printf("  [PASS] test_cellular_4g_5g_and_failover (CSQ + C5GREG/CEREG + 5G RedCap/SA + Failover)\n");
+}
+
 int main(void) {
     printf("Running EdgeHMI Full C11 Core Unit Tests...\n");
     test_data_bus();
@@ -533,6 +587,7 @@ int main(void) {
     test_discovery_protocol();
     test_security_and_nvs_keys();
     test_modbus_tcp_and_can_and_history();
+    test_cellular_4g_5g_and_failover();
     printf("ALL FULL C11 CORE TESTS PASSED.\n");
     return 0;
 }

@@ -1,6 +1,7 @@
 #include "cloud_mqtt.h"
 
 #include "cJSON.h"
+#include "cellular_modem.h"
 #include "esp_attr.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -184,19 +185,31 @@ edgehmi_err_t edgehmi_net_save_wifi(const char *ssid, const char *password) {
     return EDGEHMI_OK;
 }
 
-edgehmi_err_t edgehmi_net_start(const edgehmi_config_t *cfg) {
+static void on_wifi_ip_event(void *arg, esp_event_base_t base, int32_t event_id, void *data) {
+    (void)arg;
+    (void)data;
+    if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        edgehmi_cellular_notify_wifi(true);
+    } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        edgehmi_cellular_notify_wifi(false);
+    }
+}
+
+esp_netif_t *edgehmi_net_start(const edgehmi_config_t *cfg) {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     snprintf(s_dev_id, sizeof(s_dev_id), "edgehmi-%02x%02x%02x", mac[3], mac[4], mac[5]);
 
     esp_netif_init();
     esp_event_loop_create_default();
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
     esp_netif_create_default_wifi_ap();
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_ip_event, NULL);
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, on_wifi_ip_event, NULL);
 
     wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
     if (esp_wifi_init(&wcfg) != ESP_OK) {
-        return EDGEHMI_ERR_IO;
+        return sta_netif;
     }
 
     char ssid[33] = {0};
@@ -238,14 +251,7 @@ edgehmi_err_t edgehmi_net_start(const edgehmi_config_t *cfg) {
     if (ssid[0] != '\0') {
         esp_wifi_connect();
     }
-
-#ifdef CONFIG_EDGEHMI_ENABLE_4G_MODEM
-    if (cfg && cfg->net.modem_4g_enabled) {
-        ESP_LOGI(TAG, "4G Cat.1 PPP modem enabled on TX=%d RX=%d (esp_modem ready)",
-                 (int)cfg->net.modem_tx_pin, (int)cfg->net.modem_rx_pin);
-    }
-#endif
-    return EDGEHMI_OK;
+    return sta_netif;
 }
 
 void edgehmi_cloud_mqtt_reconfigure(void) {

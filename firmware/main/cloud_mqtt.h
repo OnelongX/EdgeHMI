@@ -3,6 +3,7 @@
 
 #include "data_bus.h"
 #include "edgehmi_types.h"
+#include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "rule_engine.h"
@@ -11,8 +12,8 @@
 extern "C" {
 #endif
 
-/* Initialize Wi-Fi STA (with SoftAP provisioning fallback) and optional 4G Cat.1 PPP hook */
-edgehmi_err_t edgehmi_net_start(const edgehmi_config_t *cfg);
+/* Initialize Wi-Fi STA (with SoftAP fallback) and return STA netif for multi-link 4G/5G failover */
+esp_netif_t *edgehmi_net_start(const edgehmi_config_t *cfg);
 
 /* Start Core 0 MQTT telemetry publisher + remote command subscriber with offline ring-buffer */
 edgehmi_err_t edgehmi_cloud_mqtt_start(const edgehmi_config_t *active_cfg,

@@ -31,8 +31,11 @@ menu "EdgeHMI Hardware Board Support (BSP)"
         default 85
         range 10 100
 
-    config EDGEHMI_ENABLE_4G_MODEM
-        bool "Enable external 4G Cat.1 PPP Modem Support (esp_modem)"
-        default n
+    config EDGEHMI_ENABLE_CELLULAR
+        bool "Enable 4G Cat.1/Cat.4 & 5G RedCap/NR Cellular WAN Support"
+        default y
+        help
+            Enables Core 0 PPPoS UART modem driver (Air780E / EC200 / RG255C / RM500U / FM650)
+            and Wi-Fi <-> 4G/5G automatic multi-link failover.
 
 endmenu

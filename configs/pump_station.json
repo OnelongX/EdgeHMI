@@ -40,6 +40,22 @@
     "topic_prefix": "edgehmi/pump",
     "publish_interval_ms": 5000
   },
+  "network": {
+    "ap_fallback": true,
+    "failover_policy": "wifi_primary",
+    "cellular": {
+      "enabled": true,
+      "generation": "4g",
+      "interface": "uart_ppp",
+      "apn": "cmnet",
+      "uart_port": 2,
+      "baudrate": 115200,
+      "tx_pin": 13,
+      "rx_pin": 14,
+      "pwrkey_pin": -1,
+      "reset_pin": -1
+    }
+  },
   "rules": [
     {
       "id": "rule_high_level_stop",

@@ -305,13 +305,49 @@ typedef struct {
     uint32_t publish_interval_ms;
 } edgehmi_cloud_cfg_t;
 
+typedef enum {
+    NET_POLICY_WIFI_ONLY = 0,
+    NET_POLICY_CELLULAR_ONLY = 1,
+    NET_POLICY_WIFI_PRIMARY = 2,     /* Wi-Fi primary, auto-failover to 4G/5G */
+    NET_POLICY_CELLULAR_PRIMARY = 3  /* 4G/5G primary, Wi-Fi backup */
+} edgehmi_net_policy_t;
+
+typedef enum {
+    CELL_GEN_AUTO = 0,      /* Auto 5G/4G */
+    CELL_GEN_4G = 1,        /* 4G LTE / Cat.1 / Cat.4 */
+    CELL_GEN_5G = 2,        /* 5G NR (SA/NSA) */
+    CELL_GEN_5G_REDCAP = 3  /* 5G RedCap (3GPP R17 industrial IoT) */
+} edgehmi_cell_gen_t;
+
+typedef enum {
+    CELL_IFACE_UART_PPP = 0, /* UART AT + PPPoS (universal 4G/5G modules) */
+    CELL_IFACE_USB_ECM = 1   /* ESP32-S3 USB OTG CDC-ECM/NCM (high-speed 4G Cat.4 / 5G NR) */
+} edgehmi_cell_iface_t;
+
+typedef struct {
+    bool enabled;
+    edgehmi_cell_gen_t generation;
+    edgehmi_cell_iface_t iface;
+    char apn[48];
+    char apn_user[32];
+    char apn_pass[32];
+    char sim_pin[12];
+    uint8_t uart_port;
+    uint32_t baudrate;
+    int8_t tx_pin;
+    int8_t rx_pin;
+    int8_t rts_pin;
+    int8_t cts_pin;
+    int8_t pwrkey_pin;
+    int8_t reset_pin;
+} edgehmi_cellular_cfg_t;
+
 typedef struct {
     char ssid[33];
     char password[65];
     bool ap_fallback;
-    bool modem_4g_enabled;
-    int8_t modem_tx_pin;
-    int8_t modem_rx_pin;
+    edgehmi_net_policy_t failover_policy;
+    edgehmi_cellular_cfg_t cellular;
 } edgehmi_net_cfg_t;
 
 typedef struct {

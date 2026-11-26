@@ -1,4 +1,5 @@
 #include "ota_config.h"
+#include "cellular_modem.h"
 #include "cloud_mqtt.h"
 #include "ota_firmware.h"
 
@@ -143,7 +144,7 @@ static bool check_bearer_auth(httpd_req_t *req) {
 }
 
 static esp_err_t handle_health(httpd_req_t *req) {
-    char resp[256];
+    char resp[512];
     edgehmi_mb_stats_t stats_copy;
     bool has_stats = false;
     if (s_mb_stats) {
@@ -152,11 +153,24 @@ static esp_err_t handle_health(httpd_req_t *req) {
         has_stats = true;
         if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
     }
+    edgehmi_cell_status_t cell;
+    edgehmi_wan_link_t wan = WAN_LINK_OFFLINE;
+    edgehmi_cellular_get_status(&cell, &wan);
+    const char *wan_str = (wan == WAN_LINK_WIFI) ? "wifi"
+                          : (wan == WAN_LINK_CELLULAR) ? "cellular"
+                                                       : "offline";
+    char esc_op[48];
+    edgehmi_json_escape(cell.operator_name, esc_op, sizeof(esc_op));
+
     if (has_stats) {
         snprintf(resp, sizeof(resp),
-                 "{\"status\":\"ok\",\"engine\":\"edgehmi-c11\","
+                 "{\"status\":\"ok\",\"engine\":\"edgehmi-c11\",\"wan_link\":\"%s\","
+                 "\"cellular\":{\"rat\":\"%s\",\"rssi_dbm\":%d,\"bars\":%u,"
+                 "\"ppp_up\":%s,\"operator\":\"%s\"},"
                  "\"modbus\":{\"tx\":%lu,\"rx_ok\":%lu,\"crc_err\":%lu,"
                  "\"timeout_err\":%lu,\"retries\":%lu,\"last_rtt_ms\":%lu}}",
+                 wan_str, edgehmi_cell_rat_str(cell.rat), (int)cell.rssi_dbm,
+                 (unsigned)cell.signal_bars, cell.ppp_up ? "true" : "false", esc_op,
                  (unsigned long)stats_copy.tx_count,
                  (unsigned long)stats_copy.rx_ok,
                  (unsigned long)stats_copy.crc_err,
@@ -164,7 +178,8 @@ static esp_err_t handle_health(httpd_req_t *req) {
                  (unsigned long)stats_copy.retry_count,
                  (unsigned long)stats_copy.last_rtt_ms);
     } else {
-        snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"engine\":\"edgehmi-c11\"}");
+        snprintf(resp, sizeof(resp),
+                 "{\"status\":\"ok\",\"engine\":\"edgehmi-c11\",\"wan_link\":\"%s\"}", wan_str);
     }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, resp);
@@ -307,13 +322,14 @@ static esp_err_t handle_ack_alarms(httpd_req_t *req) {
 
 static const char *s_setup_html =
     "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>EdgeHMI Wi-Fi Setup</title><style>body{font-family:sans-serif;background:#0b1220;color:#e2e8f0;padding:24px;max-width:420px;margin:auto}"
+    "<title>EdgeHMI Wi-Fi & 4G/5G Setup</title><style>body{font-family:sans-serif;background:#0b1220;color:#e2e8f0;padding:24px;max-width:440px;margin:auto}"
     "input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#fff;font-size:15px}"
     "button{background:#0284c7;border:none;font-weight:700;cursor:pointer}</style></head><body>"
-    "<h2>EdgeHMI 现场配网 (Wi-Fi Setup)</h2><p>输入厂区 Wi-Fi 名称与密码，保存至 NVS 并自动接入局域网。</p>"
-    "<input id=s placeholder='Wi-Fi SSID'><input id=p type=password placeholder='Wi-Fi Password'>"
+    "<h2>EdgeHMI 现场配网 (Wi-Fi / 4G / 5G)</h2><p>配置厂区 Wi-Fi 或 4G/5G 物联网卡 APN，保存至 NVS 并自动重连。</p>"
+    "<input id=s placeholder='Wi-Fi SSID (可选)'><input id=p type=password placeholder='Wi-Fi Password'>"
+    "<input id=a placeholder='4G/5G APN (如 cmnet / 3gnet / ctiot)'>"
     "<button onclick=\"fetch('/api/wifi/setup',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({ssid:s.value,password:p.value})}).then(r=>r.json()).then(d=>m.textContent=d.ok?'已保存，正在连接 Wi-Fi...':d.error)\">保存并连接</button>"
+    "body:JSON.stringify({ssid:s.value,password:p.value,apn:a.value})}).then(r=>r.json()).then(d=>m.textContent=d.ok?'已保存，正在接入网络...':d.error)\">保存并连接</button>"
     "<p id=m></p></body></html>";
 
 static esp_err_t handle_setup_page(httpd_req_t *req) {
@@ -333,14 +349,22 @@ static esp_err_t handle_wifi_setup(httpd_req_t *req) {
     cJSON *root = cJSON_Parse(body);
     const cJSON *jssid = root ? cJSON_GetObjectItemCaseSensitive(root, "ssid") : NULL;
     const cJSON *jpass = root ? cJSON_GetObjectItemCaseSensitive(root, "password") : NULL;
-    if (!cJSON_IsString(jssid) || jssid->valuestring[0] == '\0') {
-        cJSON_Delete(root);
+    const cJSON *japn  = root ? cJSON_GetObjectItemCaseSensitive(root, "apn") : NULL;
+    bool updated = false;
+    if (cJSON_IsString(jssid) && jssid->valuestring[0] != '\0') {
+        edgehmi_net_save_wifi(jssid->valuestring, cJSON_IsString(jpass) ? jpass->valuestring : "");
+        updated = true;
+    }
+    if (cJSON_IsString(japn) && japn->valuestring[0] != '\0') {
+        edgehmi_cellular_save_apn(japn->valuestring, "auto");
+        updated = true;
+    }
+    cJSON_Delete(root);
+    if (!updated) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"missing ssid\"}");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"missing ssid or apn\"}");
     }
-    edgehmi_net_save_wifi(jssid->valuestring, cJSON_IsString(jpass) ? jpass->valuestring : "");
-    cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true,\"status\":\"connecting\"}");
 }
