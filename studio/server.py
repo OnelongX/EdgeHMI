@@ -18,6 +18,7 @@ import json
 import math
 import os
 import random
+import re
 import socket
 import sys
 import threading
@@ -39,8 +40,72 @@ from validate_config import validate_config  # noqa: E402
 
 CONFIGS_DIR = ROOT_DIR / "configs"
 WEB_DIR = Path(__file__).resolve().parent / "web"
+ASSETS_DIR = Path(os.environ.get("EDGEHMI_ASSETS_DIR", str(Path(__file__).resolve().parent / "assets")))
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 NVS_PATH = Path(os.environ.get("EDGEHMI_NVS_PATH", str(Path(__file__).resolve().parent / "retentive_nvs.json")))
 DISCOVERY_PORT = int(os.environ.get("EDGEHMI_DISCOVERY_PORT", "56888"))
+SAFE_ASSET_RE = re.compile(r"^[A-Za-z0-9._-]{1,40}$")
+
+H5_MONITOR_HTML = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EdgeHMI 手机实时监控 (/h5)</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#060b14;color:#e2e8f0;margin:0;padding:16px}
+    h2{margin:0 0 10px;color:#38bdf8;font-size:18px}
+    .card{background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .t{background:#111c2e;padding:10px;border-radius:8px;border:1px solid #1e293b}
+    .tn{font-size:12px;color:#94a3b8;word-break:break-all}
+    .tv{font-size:20px;font-weight:700;color:#2dd4bf;margin-top:4px;font-variant-numeric:tabular-nums}
+    .al{padding:6px 8px;border-left:3px solid #ef4444;background:#1e293b;border-radius:6px;margin-top:6px;font-size:13px}
+  </style>
+</head>
+<body>
+  <h2>EdgeHMI 移动实时监控 (/h5)</h2>
+  <div class="card" id="wan">链路状态加载中...</div>
+  <div class="card"><div class="grid" id="tags"></div></div>
+  <div class="card"><strong>实时告警</strong><div id="alms" style="margin-top:6px;color:#94a3b8;">加载中...</div></div>
+  <script>
+    async function tick() {
+      try {
+        const st = await (await fetch('/api/state')).json();
+        const w = st.wan || {};
+        document.getElementById('wan').textContent =
+          '设备: ' + (st.config?.device?.name || 'EdgeHMI') +
+          ' | WAN: ' + String(w.active_link || 'wifi').toUpperCase() +
+          (w.cellular_enabled ? ' (' + (w.rat || '') + ' ' + (w.rssi_dbm || 0) + 'dBm)' : '');
+        const tbox = document.getElementById('tags');
+        tbox.innerHTML = '';
+        Object.values(st.tags || {}).forEach(x => {
+          const d = document.createElement('div'); d.className = 't';
+          const n = document.createElement('div'); n.className = 'tn'; n.textContent = x.name;
+          const v = document.createElement('div'); v.className = 'tv';
+          v.textContent = Number(x.value).toFixed(2) + (x.unit ? ' ' + x.unit : '');
+          d.appendChild(n); d.appendChild(v); tbox.appendChild(d);
+        });
+        const abox = document.getElementById('alms');
+        abox.innerHTML = '';
+        const list = (st.alarms || []).slice(0, 8);
+        if (!list.length) {
+          abox.textContent = '系统运行正常，无活动告警';
+        } else {
+          list.forEach(x => {
+            const d = document.createElement('div'); d.className = 'al';
+            d.textContent = (x.ack ? '[ACK] ' : '[!] ') + (x.ts || '') + ' ' + (x.message || '');
+            abox.appendChild(d);
+          });
+        }
+      } catch (e) {}
+    }
+    tick();
+    setInterval(tick, 1000);
+  </script>
+</body>
+</html>
+"""
 
 
 class IndustrialRuntime:
@@ -63,7 +128,7 @@ class IndustrialRuntime:
         self.wifi_online: bool = True
         self.cell_online: bool = True
         self.cell_rssi_dbm: int = -71
-        self.fw_version: str = "2.3.0"
+        self.fw_version: str = "2.4.0"
         self.device_id: str = os.environ.get("EDGEHMI_DEVICE_ID", "edgehmi-sim001")
         self.http_port: int = 8765
         self.start_ts: float = time.time()
@@ -732,31 +797,68 @@ def make_handler(runtime: IndustrialRuntime):
             self.wfile.write(raw)
 
         def do_GET(self) -> None:
-            if self.path == "/" or self.path == "/index.html":
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            if path == "/" or path == "/index.html":
                 html = (WEB_DIR / "index.html").read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(html)))
                 self.end_headers()
                 self.wfile.write(html)
-            elif self.path == "/api/health":
+            elif path == "/h5":
+                html = H5_MONITOR_HTML.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+            elif path.startswith("/api/asset/"):
+                fname = path[len("/api/asset/"):]
+                if not SAFE_ASSET_RE.match(fname) or ".." in fname:
+                    self._send_json(400, {"ok": False, "message": "invalid asset name"})
+                    return
+                fpath = (ASSETS_DIR / fname).resolve()
+                try:
+                    fpath.relative_to(ASSETS_DIR.resolve())
+                except ValueError:
+                    self._send_json(400, {"ok": False, "message": "invalid asset path"})
+                    return
+                if not fpath.is_file():
+                    self._send_json(404, {"ok": False, "message": "asset not found"})
+                    return
+                ext = fpath.suffix.lower()
+                ctype = {
+                    ".png": "image/png",
+                    ".svg": "image/svg+xml",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".bmp": "image/bmp",
+                }.get(ext, "application/octet-stream")
+                data = fpath.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            elif path == "/api/health":
                 self._send_json(200, {"status": "ok", "engine": "edgehmi-studio-sim", "fw_ver": runtime.fw_version})
-            elif self.path == "/api/discover":
+            elif path == "/api/discover":
                 devs = discover_devices(udp_port=DISCOVERY_PORT, timeout_s=0.6)
                 self._send_json(200, {"ok": True, "udp_port": DISCOVERY_PORT, "devices": devs})
-            elif self.path == "/api/tags":
+            elif path == "/api/tags":
                 snap = runtime.snapshot()
                 self._send_json(200, {"tags": list(snap["tags"].values())})
-            elif self.path == "/api/alarms":
+            elif path == "/api/alarms":
                 snap = runtime.snapshot()
                 self._send_json(200, {"alarms": snap["alarms"]})
-            elif self.path == "/api/audit":
+            elif path == "/api/audit":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return
                 snap = runtime.snapshot()
                 self._send_json(200, {"audits": snap["audits"]})
-            elif self.path == "/api/history.csv":
+            elif path == "/api/history.csv":
                 csv_bytes = ("\ufeff" + runtime.export_history_csv()).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
@@ -764,16 +866,41 @@ def make_handler(runtime: IndustrialRuntime):
                 self.send_header("Content-Length", str(len(csv_bytes)))
                 self.end_headers()
                 self.wfile.write(csv_bytes)
-            elif self.path == "/api/state":
+            elif path == "/api/state":
                 self._send_json(200, runtime.snapshot())
             else:
                 self._send_json(404, {"error": "not found"})
 
         def do_POST(self) -> None:
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
             length = int(self.headers.get("Content-Length", "0"))
             raw_bytes = self.rfile.read(length) if length > 0 else b""
 
-            if self.path == "/api/ota/firmware":
+            if path == "/api/asset":
+                if not runtime.check_bearer_auth(self.headers.get("Authorization")):
+                    self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
+                    return
+                qs = urllib.parse.parse_qs(parsed.query)
+                fname = (qs.get("name") or [""])[0]
+                if not SAFE_ASSET_RE.match(fname) or ".." in fname:
+                    self._send_json(400, {"ok": False, "message": "invalid asset name"})
+                    return
+                if not raw_bytes or len(raw_bytes) > 65536:
+                    self._send_json(400, {"ok": False, "message": "asset size must be 1..65536 bytes"})
+                    return
+                ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+                fpath = (ASSETS_DIR / fname).resolve()
+                try:
+                    fpath.relative_to(ASSETS_DIR.resolve())
+                except ValueError:
+                    self._send_json(400, {"ok": False, "message": "invalid asset path"})
+                    return
+                fpath.write_bytes(raw_bytes)
+                self._send_json(200, {"ok": True, "src": f"/api/asset/{fname}", "bytes": len(raw_bytes)})
+                return
+
+            if path == "/api/ota/firmware":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return

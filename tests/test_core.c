@@ -10,6 +10,7 @@
 #include "ota_package.h"
 #include "recipe_sched.h"
 #include "rule_engine.h"
+#include "../firmware/main/default_config.h"
 
 #undef NDEBUG
 #include <assert.h>
@@ -716,15 +717,41 @@ static void test_utf8_chinese_support(void) {
     assert(is_valid_utf8(zcfg->device_name) && strlen(zcfg->device_name) > 6);
     assert(zcfg->recipe_count == 2 && is_valid_utf8(zcfg->recipes[0].name));
 
-    /* Verify dropdown & led widget types parsed from Chinese config */
+    /* Verify dropdown, led & dynamic color_rules parsed from Chinese config */
     bool found_dd = false, found_led = false;
+    const edgehmi_widget_t *w_gauge = NULL;
     for (size_t i = 0; i < zcfg->pages[0].widget_count; ++i) {
         const edgehmi_widget_t *w = &zcfg->pages[0].widgets[i];
         assert(is_valid_utf8(w->text));
         if (w->type == WIDGET_DROPDOWN) found_dd = true;
         if (w->type == WIDGET_LED) found_led = true;
+        if (strcmp(w->id, "gauge_level") == 0) w_gauge = w;
     }
-    assert(found_dd && found_led);
+    assert(found_dd && found_led && w_gauge != NULL);
+    assert(w_gauge->color_rule_count == 2);
+    assert(edgehmi_widget_eval_color(w_gauge, 60.0) == 0x2DD4BFu);
+    assert(edgehmi_widget_eval_color(w_gauge, 80.0) == 0xF59E0Bu);
+    assert(edgehmi_widget_eval_color(w_gauge, 92.0) == 0xEF4444u);
+
+    /* Verify conditional visibility (visible_when) */
+    edgehmi_widget_t vis_w;
+    memset(&vis_w, 0, sizeof(vis_w));
+    vis_w.has_vis_rule = true;
+    vis_w.vis_tag_idx = edgehmi_bus_find(&zbus, "pump_cmd");
+    vis_w.vis_op = RULE_OP_EQ;
+    vis_w.vis_threshold = 1.0;
+    edgehmi_bus_set(&zbus, vis_w.vis_tag_idx, 0.0, TAG_QUAL_GOOD, 100);
+    assert(edgehmi_widget_eval_visible(&vis_w, &zbus) == false);
+    edgehmi_bus_set(&zbus, vis_w.vis_tag_idx, 1.0, TAG_QUAL_GOOD, 200);
+    assert(edgehmi_widget_eval_visible(&vis_w, &zbus) == true);
+
+    /* 4. Built-in empty-flash Chinese factory default boot config must parse cleanly */
+    edgehmi_config_t *fcfg = (edgehmi_config_t *)calloc(1, sizeof(edgehmi_config_t));
+    edgehmi_bus_t fbus;
+    edgehmi_bus_init(&fbus, NULL, NULL, NULL);
+    assert(edgehmi_config_load_json(EDGEHMI_FACTORY_DEFAULT_JSON, fcfg, &fbus, err, sizeof(err)) == EDGEHMI_OK);
+    assert(fcfg->page_count >= 1 && is_valid_utf8(fcfg->device_name));
+    free(fcfg);
 
     /* 3. Chinese alarm + audit JSON & discovery announce preserve valid UTF-8 */
     edgehmi_history_t *zhist = (edgehmi_history_t *)calloc(1, sizeof(edgehmi_history_t));

@@ -31,9 +31,9 @@
 | **多协议与北向网关** | **Modbus RTU 块读（4 种字节序）+ Modbus TCP 主/从双向（自带北向 SCADA 协议转换网关）+ 原生 CAN 2.0B (TWAI v2) + 板载 GPIO/ADC/PWM** | 轮询吞吐提升 **3x**；南向采集电表/BMS/IO 后，上位机组态王/WinCC 可直接用标准 Modbus TCP 读取全测点 |
 | **开箱即用 BSP 与节能** | 内置 `edgehmi_bsp`（**Waveshare 4.3" / Sunton 8048S043 / 8048S070**，PSRAM 双缓冲 + GT911 + **闲置自动降背光节能 & 触摸/告警秒级亮屏唤醒**） | 无需手写 RGB 时序，大幅延长工业屏背光寿命并降低光储站点待机功耗 |
 | **确定性联锁与排程** | 支持单条件 / 复合 `AND` & `OR` / **RS485 断线 Fail-Safe**、滞环、去抖、**持续强制锁定（`enforce`）**、**批量配方（`recipes`）与边缘定时排程（`schedules` + SNTP）** | 故障未解除期间误合闸自动拉停；支持产线换型一键切配方与峰谷分时自动控制 |
-| **全栈无代码 IDE** | **Studio v2.3 六标签工控工作台**：**16 种工业控件**（新增 `dropdown`/`led`）、**配方一键下发、合规操作审计（Audit Trail）、Vector `.dbc` 一键导入 CAN 点表**、真机镜像、WebSerial | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，无需手写 JSON 或手算 CAN 位段 |
+| **全栈无代码 IDE** | **Studio v2.4 六标签工控工作台**：**16 种工业控件**（支持**动态阈值变色 `color_rules` / 条件显隐 `visible_when` / PNG 图片上传渲染**）、**配方一键下发、合规操作审计、Vector `.dbc` 导入**、键盘微调对齐、`/h5` 手机实时监控、真机镜像、WebSerial | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，手机浏览器直连 `/h5` 巡检，无需手写 JSON |
 | **4G/5G 多链路云边协同** | **Core 0 内置 4G Cat.1/Cat.4 & 5G RedCap/NR PPPoS 驱动**（兼容 Air780E / EC200 / RG255C / RM500U / FM650 + USB OTG ECM 预留）与 **Wi-Fi ↔ 4G/5G 自动主备切换** + MQTT 断网补传 | 野外无 Wi-Fi 泵站/光伏站直连公网，主链路断网自动切 4G/5G 零中断 |
-| **中文子集 & OTA** | `tools/build_font.py` 自动扫描组态汉字裁剪 LVGL 9 字库（~21KB）；双模 OTA（配置原子热推 + 固件 Push/Pull/离线 `.epk`）+ UDP 56888 发现 | 极小 Flash 占用解决真机中文显示，支持局域网批量部署与崩退回滚 |
+| **内置中文 & 零门槛烧录** | 固件原生内置 **SIL OFL 1.1 Noto Sans SC 中文字体子集**（312 字 / 25.4KB Flash）与**空片出厂中文引导页**（自带 `/setup` 配网二维码）；CI 自动产出单文件 **`_merged.bin`**（0x0 一键烧录）+ 离线 `.epk` + 双模 OTA | 空片 ESP32-S3 烧录单文件固件上电即显高清中文界面与配网码，彻底告别花屏/豆腐块 |
 
 ---
 

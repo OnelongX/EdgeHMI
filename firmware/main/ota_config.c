@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char *TAG = "edgehmi_ota";
 static edgehmi_bus_t *s_bus = NULL;
@@ -412,6 +413,91 @@ static const char *s_setup_html =
     "body:JSON.stringify({ssid:s.value,password:p.value,apn:a.value,pin:pin.value})}).then(r=>r.json()).then(d=>m.textContent=d.ok?'已保存，正在接入网络...':d.error)\">保存并连接</button>"
     "<p id=m></p></body></html>";
 
+static const char *s_h5_html =
+    "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>EdgeHMI 手机实时监控</title><style>body{font-family:sans-serif;background:#060b14;color:#e2e8f0;margin:0;padding:16px}"
+    "h2{margin:0 0 10px;color:#38bdf8;font-size:18px}.card{background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;margin-bottom:12px}"
+    ".grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.t{background:#111c2e;padding:10px;border-radius:8px}"
+    ".tv{font-size:20px;font-weight:700;color:#2dd4bf}.al{padding:6px 8px;border-left:3px solid #ef4444;background:#1e293b;border-radius:6px;margin-top:6px;font-size:13px}"
+    "</style></head><body><h2>EdgeHMI 移动实时监控 (/h5)</h2>"
+    "<div class=card id=wan>链路状态加载中...</div><div class=card><div class=grid id=tags></div></div>"
+    "<div class=card><strong>实时告警</strong><div id=alms></div></div>"
+    "<script>async function tick(){try{const h=await(await fetch('/api/health')).json();"
+    "wan.textContent='WAN: '+(h.wan_link||'--').toUpperCase()+(h.cellular?' | '+h.cellular.rat+' '+h.cellular.rssi_dbm+'dBm':'');"
+    "const t=await(await fetch('/api/tags')).json();tags.innerHTML='';"
+    "(t.tags||[]).forEach(x=>{const d=document.createElement('div');d.className='t';"
+    "const n=document.createElement('div');n.style.fontSize='12px';n.style.color='#94a3b8';n.textContent=x.name;"
+    "const v=document.createElement('div');v.className='tv';v.textContent=Number(x.value).toFixed(2);"
+    "d.appendChild(n);d.appendChild(v);tags.appendChild(d);});"
+    "const a=await(await fetch('/api/alarms')).json();alms.innerHTML='';"
+    "(a.alarms||[]).slice(0,6).forEach(x=>{const d=document.createElement('div');d.className='al';d.textContent=(x.ack?'[ACK] ':'[!] ')+x.message;alms.appendChild(d);});"
+    "}catch(e){}}tick();setInterval(tick,1500);</script></body></html>";
+
+static esp_err_t handle_h5_page(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_sendstr(req, s_h5_html);
+}
+
+static bool is_safe_asset_name(const char *name) {
+    if (!name || name[0] == '\0' || strlen(name) > 40) return false;
+    for (size_t i = 0; name[i] != '\0'; ++i) {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        if (!ok) return false;
+        if (c == '.' && name[i + 1] == '.') return false;
+    }
+    return true;
+}
+
+static esp_err_t handle_upload_asset(httpd_req_t *req) {
+    if (!check_bearer_auth(req)) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"unauthorized\"}");
+    }
+    char qbuf[80] = {0};
+    char fname[48] = {0};
+    if (httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf)) != ESP_OK ||
+        httpd_query_key_value(qbuf, "name", fname, sizeof(fname)) != ESP_OK ||
+        !is_safe_asset_name(fname)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid asset name");
+    }
+    if (req->content_len <= 0 || req->content_len > 65536) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "asset size must be 1..65536 bytes");
+    }
+    uint8_t *buf = (uint8_t *)edgehmi_alloc_buf((size_t)req->content_len);
+    if (!buf) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+
+    int received = 0;
+    while (received < req->content_len) {
+        int r = httpd_req_recv(req, (char *)buf + received, req->content_len - received);
+        if (r <= 0) {
+            free(buf);
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "recv failed");
+        }
+        received += r;
+    }
+    mkdir("/cfg/assets", 0755);
+    char path[96];
+    snprintf(path, sizeof(path), "/cfg/assets/%s", fname);
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        free(buf);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "open asset failed");
+    }
+    size_t wr = fwrite(buf, 1, (size_t)received, f);
+    fclose(f);
+    free(buf);
+    if (wr != (size_t)received) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "write asset failed");
+    }
+    char resp[128];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"src\":\"/api/asset/%s\",\"bytes\":%u}", fname, (unsigned)wr);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, resp);
+}
+
 static esp_err_t handle_setup_page(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     return httpd_resp_sendstr(req, s_setup_html);
@@ -479,7 +565,7 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0; /* Pin HTTP/OTA management server to Core 0 */
-    config.max_uri_handlers = 18;
+    config.max_uri_handlers = 22;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
         return EDGEHMI_ERR_IO;
@@ -493,6 +579,8 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_uri_t u_ack    = { .uri = "/api/alarms/ack",  .method = HTTP_POST, .handler = handle_ack_alarms };
     httpd_uri_t u_audit  = { .uri = "/api/audit",       .method = HTTP_GET,  .handler = handle_get_audit };
     httpd_uri_t u_recipe = { .uri = "/api/recipe/apply",.method = HTTP_POST, .handler = handle_apply_recipe };
+    httpd_uri_t u_asset  = { .uri = "/api/asset",       .method = HTTP_POST, .handler = handle_upload_asset };
+    httpd_uri_t u_h5     = { .uri = "/h5",              .method = HTTP_GET,  .handler = handle_h5_page };
     httpd_uri_t u_setup  = { .uri = "/setup",           .method = HTTP_GET,  .handler = handle_setup_page };
     httpd_uri_t u_wifi   = { .uri = "/api/wifi/setup",  .method = HTTP_POST, .handler = handle_wifi_setup };
 
@@ -504,6 +592,8 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_register_uri_handler(server, &u_ack);
     httpd_register_uri_handler(server, &u_audit);
     httpd_register_uri_handler(server, &u_recipe);
+    httpd_register_uri_handler(server, &u_asset);
+    httpd_register_uri_handler(server, &u_h5);
     httpd_register_uri_handler(server, &u_setup);
     httpd_register_uri_handler(server, &u_wifi);
     edgehmi_ota_register_handlers(server, active_cfg, cfg_mutex);

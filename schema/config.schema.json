@@ -302,7 +302,29 @@
                 "false_text": { "type": "string" },
                 "confirm": { "type": "boolean" },
                 "confirm_text": { "type": "string", "maxLength": 96 },
-                "pin_required": { "type": "boolean" }
+                "pin_required": { "type": "boolean" },
+                "color_rules": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "items": {
+                    "type": "object",
+                    "required": ["op", "value", "color"],
+                    "properties": {
+                      "op": { "type": "string", "enum": [">", ">=", "<", "<=", "==", "!="] },
+                      "value": { "type": "number" },
+                      "color": { "type": "string" }
+                    }
+                  }
+                },
+                "visible_when": {
+                  "type": "object",
+                  "required": ["tag", "op", "value"],
+                  "properties": {
+                    "tag": { "type": "string" },
+                    "op": { "type": "string", "enum": [">", ">=", "<", "<=", "==", "!="] },
+                    "value": { "type": "number" }
+                  }
+                }
               }
             }
           }

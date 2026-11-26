@@ -71,12 +71,17 @@ jobs:
             exit 1
           fi
 
-      - name: Pack Verified EPK1 Firmware Package
+      - name: Pack Verified EPK1 Firmware Package & Single-File Merged Binary
+        shell: bash
         run: |
+          . /opt/esp/idf/export.sh
           mkdir -p dist
           cp firmware/build/edgehmi_esp32s3.bin dist/edgehmi_${{ matrix.board_name }}.bin
-          python3 tools/pack_epk.py firmware 2.3.0 dist/edgehmi_${{ matrix.board_name }}.bin dist/edgehmi_${{ matrix.board_name }}.epk
+          python3 tools/pack_epk.py firmware 2.4.0 dist/edgehmi_${{ matrix.board_name }}.bin dist/edgehmi_${{ matrix.board_name }}.epk
           python3 tools/pack_epk.py --verify dist/edgehmi_${{ matrix.board_name }}.epk
+          (cd firmware && idf.py merge-bin -o "../dist/edgehmi_${{ matrix.board_name }}_merged.bin") || \
+            (cd firmware/build && python3 -m esptool --chip esp32s3 merge-bin -o "../../dist/edgehmi_${{ matrix.board_name }}_merged.bin" @flash_args)
+          ls -lh dist/
 
       - name: Upload Prebuilt Firmware Artifacts
         uses: actions/upload-artifact@v4

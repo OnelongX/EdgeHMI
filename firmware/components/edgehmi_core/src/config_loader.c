@@ -2,6 +2,7 @@
 
 #include "cJSON.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,51 @@ static edgehmi_byte_order_t parse_byte_order(const char *s, bool *ok) {
     if (strcmp(s, "DCBA") == 0) return BYTE_ORDER_DCBA;
     *ok = false;
     return BYTE_ORDER_ABCD;
+}
+
+static bool parse_rule_op_str(const char *s, edgehmi_rule_op_t *out) {
+    if (!s || !out) return false;
+    if (strcmp(s, ">") == 0)  { *out = RULE_OP_GT; return true; }
+    if (strcmp(s, ">=") == 0) { *out = RULE_OP_GE; return true; }
+    if (strcmp(s, "<") == 0)  { *out = RULE_OP_LT; return true; }
+    if (strcmp(s, "<=") == 0) { *out = RULE_OP_LE; return true; }
+    if (strcmp(s, "==") == 0) { *out = RULE_OP_EQ; return true; }
+    if (strcmp(s, "!=") == 0) { *out = RULE_OP_NE; return true; }
+    return false;
+}
+
+static bool eval_simple_op(edgehmi_rule_op_t op, double val, double thr) {
+    switch (op) {
+        case RULE_OP_GT: return val > thr;
+        case RULE_OP_GE: return val >= thr;
+        case RULE_OP_LT: return val < thr;
+        case RULE_OP_LE: return val <= thr;
+        case RULE_OP_EQ: return fabs(val - thr) < 1e-6;
+        case RULE_OP_NE: return fabs(val - thr) >= 1e-6;
+    }
+    return false;
+}
+
+uint32_t edgehmi_widget_eval_color(const edgehmi_widget_t *w, double val) {
+    if (!w) return 0x2DD4BFu;
+    uint32_t col = w->color_rgb;
+    for (size_t i = 0; i < w->color_rule_count; ++i) {
+        if (eval_simple_op(w->color_rules[i].op, val, w->color_rules[i].threshold)) {
+            col = w->color_rules[i].color_rgb;
+        }
+    }
+    return col;
+}
+
+bool edgehmi_widget_eval_visible(const edgehmi_widget_t *w, edgehmi_bus_t *bus) {
+    if (!w || !w->has_vis_rule || !bus || w->vis_tag_idx < 0) {
+        return true;
+    }
+    double v = 0.0;
+    if (edgehmi_bus_get(bus, w->vis_tag_idx, &v, NULL) != EDGEHMI_OK) {
+        return true;
+    }
+    return eval_simple_op(w->vis_op, v, w->vis_threshold);
 }
 
 static edgehmi_err_t parse_rule_cond_item(const cJSON *obj,
@@ -973,6 +1019,7 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
             edgehmi_widget_t *w = &pg->widgets[pg->widget_count];
             memset(w, 0, sizeof(*w));
             w->bind_tag_idx = -1;
+            w->vis_tag_idx = -1;
             w->type = wt;
             copy_str(w->id, sizeof(w->id), jwid->valuestring);
             w->x = (int16_t)jx->valueint;
@@ -1030,6 +1077,49 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
             if (cJSON_IsString(jctxt)) copy_str(w->confirm_text, sizeof(w->confirm_text), jctxt->valuestring);
             const cJSON *jpinreq = cJSON_GetObjectItemCaseSensitive(jw_item, "pin_required");
             w->pin_required = cJSON_IsBool(jpinreq) && cJSON_IsTrue(jpinreq);
+
+            /* Optional dynamic threshold color_rules */
+            const cJSON *jcr = cJSON_GetObjectItemCaseSensitive(jw_item, "color_rules");
+            if (cJSON_IsArray(jcr)) {
+                const cJSON *cr_it = NULL;
+                cJSON_ArrayForEach(cr_it, jcr) {
+                    if (w->color_rule_count >= EDGEHMI_MAX_COLOR_RULES) break;
+                    const cJSON *cop = cJSON_GetObjectItemCaseSensitive(cr_it, "op");
+                    const cJSON *cv  = cJSON_GetObjectItemCaseSensitive(cr_it, "value");
+                    const cJSON *cc  = cJSON_GetObjectItemCaseSensitive(cr_it, "color");
+                    edgehmi_rule_op_t op_enum = RULE_OP_GE;
+                    if (cJSON_IsString(cop) && cJSON_IsNumber(cv) && cJSON_IsString(cc) &&
+                        parse_rule_op_str(cop->valuestring, &op_enum)) {
+                        edgehmi_color_rule_t *cr = &w->color_rules[w->color_rule_count++];
+                        cr->op = op_enum;
+                        cr->threshold = cv->valuedouble;
+                        cr->color_rgb = parse_hex_color(cc->valuestring, w->color_rgb);
+                    }
+                }
+            }
+
+            /* Optional conditional visibility visible_when */
+            const cJSON *jvis = cJSON_GetObjectItemCaseSensitive(jw_item, "visible_when");
+            if (cJSON_IsObject(jvis)) {
+                const cJSON *vt = cJSON_GetObjectItemCaseSensitive(jvis, "tag");
+                const cJSON *vo = cJSON_GetObjectItemCaseSensitive(jvis, "op");
+                const cJSON *vv = cJSON_GetObjectItemCaseSensitive(jvis, "value");
+                edgehmi_rule_op_t vop = RULE_OP_EQ;
+                if (cJSON_IsString(vt) && cJSON_IsString(vo) && cJSON_IsNumber(vv) &&
+                    parse_rule_op_str(vo->valuestring, &vop)) {
+                    int16_t vidx = edgehmi_bus_find(bus, vt->valuestring);
+                    if (vidx < 0) {
+                        set_err(err_buf, err_buf_len, "widget visible_when references unknown tag");
+                        cJSON_Delete(root);
+                        return EDGEHMI_ERR_NOT_FOUND;
+                    }
+                    w->has_vis_rule = true;
+                    copy_str(w->vis_tag, sizeof(w->vis_tag), vt->valuestring);
+                    w->vis_tag_idx = vidx;
+                    w->vis_op = vop;
+                    w->vis_threshold = vv->valuedouble;
+                }
+            }
 
             pg->widget_count++;
         }

@@ -30,6 +30,7 @@ extern "C" {
 #define EDGEHMI_MAX_RECIPES         8
 #define EDGEHMI_MAX_RECIPE_ITEMS    12
 #define EDGEHMI_MAX_SCHEDULES       16
+#define EDGEHMI_MAX_COLOR_RULES     4
 
 typedef enum {
     EDGEHMI_OK = 0,
@@ -224,6 +225,12 @@ typedef enum {
 } edgehmi_widget_type_t;
 
 typedef struct {
+    edgehmi_rule_op_t op;
+    double threshold;
+    uint32_t color_rgb;
+} edgehmi_color_rule_t;
+
+typedef struct {
     char id[EDGEHMI_MAX_NAME_LEN];
     edgehmi_widget_type_t type;
     int16_t x;
@@ -239,6 +246,13 @@ typedef struct {
     double step;
     uint8_t decimals;
     uint32_t color_rgb;
+    edgehmi_color_rule_t color_rules[EDGEHMI_MAX_COLOR_RULES];
+    size_t color_rule_count;
+    bool has_vis_rule;
+    char vis_tag[EDGEHMI_MAX_NAME_LEN];
+    int16_t vis_tag_idx;
+    edgehmi_rule_op_t vis_op;
+    double vis_threshold;
     bool has_write_value;
     double write_value;
     char nav_page[EDGEHMI_MAX_NAME_LEN];

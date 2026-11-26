@@ -401,6 +401,20 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
             if nav and nav not in page_ids:
                 errors.append(f"widget '{wid}': nav_page '{nav}' does not exist")
 
+            crules = w.get("color_rules", [])
+            if isinstance(crules, list):
+                if len(crules) > 4:
+                    errors.append(f"widget '{wid}': color_rules exceeds max 4")
+                for ci, cr in enumerate(crules):
+                    if cr.get("op") not in VALID_OPS:
+                        errors.append(f"widget '{wid}'.color_rules[{ci}]: invalid op '{cr.get('op')}'")
+            vis = w.get("visible_when")
+            if isinstance(vis, dict):
+                if vis.get("tag") not in tags:
+                    errors.append(f"widget '{wid}'.visible_when: unknown tag '{vis.get('tag')}'")
+                if vis.get("op") not in VALID_OPS:
+                    errors.append(f"widget '{wid}'.visible_when: invalid op '{vis.get('op')}'")
+
     # 5. ESP32-S3 Memory Budget Estimate
     sram_static_kb = round((len(tags) * 88 + len(rules) * 260 + total_widgets * 220 + 16384) / 1024.0, 2)
     fb_double_psram_kb = round((width * height * 2 * 2) / 1024.0, 1) if isinstance(width, int) else 0.0

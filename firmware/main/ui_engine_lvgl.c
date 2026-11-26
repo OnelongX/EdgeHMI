@@ -1,5 +1,6 @@
 #include "ui_engine_lvgl.h"
 
+#include "config_loader.h"
 #include "edgehmi_bsp.h"
 #include "esp_attr.h"
 #include "esp_log.h"
@@ -289,6 +290,7 @@ static void format_value(const edgehmi_widget_t *w, double val, char *buf, size_
 static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t qual) {
     const edgehmi_widget_t *w = b->meta;
     char txt[64];
+    uint32_t dyn_col = edgehmi_widget_eval_color(w, val);
 
     switch (w->type) {
         case WIDGET_VALUE:
@@ -298,11 +300,13 @@ static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t q
                 format_value(w, val, txt, sizeof(txt));
             }
             lv_label_set_text(b->obj, txt);
+            lv_obj_set_style_text_color(b->obj, lv_color_hex(dyn_col), LV_PART_MAIN);
             break;
 
         case WIDGET_GAUGE: {
             int32_t iv = (int32_t)lround(val);
             lv_arc_set_value(b->obj, iv);
+            lv_obj_set_style_arc_color(b->obj, lv_color_hex(dyn_col), LV_PART_INDICATOR);
             if (b->aux_label) {
                 format_value(w, val, txt, sizeof(txt));
                 lv_label_set_text(b->aux_label, txt);
@@ -313,6 +317,7 @@ static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t q
         case WIDGET_BAR: {
             int32_t iv = (int32_t)lround(val);
             lv_bar_set_value(b->obj, iv, LV_ANIM_OFF);
+            lv_obj_set_style_bg_color(b->obj, lv_color_hex(dyn_col), LV_PART_INDICATOR);
             break;
         }
 
@@ -334,7 +339,7 @@ static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t q
             }
             lv_obj_set_style_bg_color(
                 b->obj,
-                lv_color_hex(on ? w->color_rgb : 0x334155u),
+                lv_color_hex(on ? dyn_col : 0x334155u),
                 LV_PART_MAIN);
             break;
         }
@@ -370,8 +375,9 @@ static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t q
             bool on = fabs(val) > 0.5;
             lv_obj_set_style_bg_color(
                 b->obj,
-                lv_color_hex(on ? w->color_rgb : 0x1E293Bu),
+                lv_color_hex(on ? dyn_col : 0x1E293Bu),
                 LV_PART_MAIN);
+            lv_obj_set_style_shadow_color(b->obj, lv_color_hex(dyn_col), LV_PART_MAIN);
             lv_obj_set_style_shadow_width(b->obj, on ? 14 : 0, LV_PART_MAIN);
             break;
         }
@@ -608,16 +614,37 @@ edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg,
                 }
 
                 case WIDGET_IMAGE: {
-                    obj = lv_obj_create(scr);
-                    lv_obj_set_style_bg_color(obj, lv_color_hex(card_hex), LV_PART_MAIN);
-                    lv_obj_set_style_border_color(obj, lv_color_hex(w->color_rgb), LV_PART_MAIN);
-                    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
-                    lv_obj_set_style_radius(obj, 8, LV_PART_MAIN);
-                    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
-                    lv_obj_t *im = lv_label_create(obj);
-                    lv_label_set_text(im, w->text[0] ? w->text : (w->src[0] ? w->src : "IMG"));
-                    lv_obj_set_style_text_color(im, lv_color_hex(w->color_rgb), LV_PART_MAIN);
-                    lv_obj_center(im);
+                    bool loaded_png = false;
+#if defined(LV_USE_FS_STDIO) && LV_USE_FS_STDIO
+                    if (w->src[0] != '\0') {
+                        const char *fname = w->src;
+                        if (strncmp(fname, "/api/asset/", 11) == 0) fname += 11;
+                        else if (strncmp(fname, "/assets/", 8) == 0) fname += 8;
+                        char fs_check[128];
+                        snprintf(fs_check, sizeof(fs_check), "/cfg/assets/%s", fname);
+                        FILE *fp = fopen(fs_check, "rb");
+                        if (fp) {
+                            fclose(fp);
+                            char lv_path[128];
+                            snprintf(lv_path, sizeof(lv_path), "S:/assets/%s", fname);
+                            obj = lv_image_create(scr);
+                            lv_image_set_src(obj, lv_path);
+                            loaded_png = true;
+                        }
+                    }
+#endif
+                    if (!loaded_png) {
+                        obj = lv_obj_create(scr);
+                        lv_obj_set_style_bg_color(obj, lv_color_hex(card_hex), LV_PART_MAIN);
+                        lv_obj_set_style_border_color(obj, lv_color_hex(w->color_rgb), LV_PART_MAIN);
+                        lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+                        lv_obj_set_style_radius(obj, 8, LV_PART_MAIN);
+                        lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+                        lv_obj_t *im = lv_label_create(obj);
+                        lv_label_set_text(im, w->text[0] ? w->text : (w->src[0] ? w->src : "IMG"));
+                        lv_obj_set_style_text_color(im, lv_color_hex(w->color_rgb), LV_PART_MAIN);
+                        lv_obj_center(im);
+                    }
                     break;
                 }
 
@@ -752,6 +779,14 @@ void edgehmi_ui_sync_tick(void) {
     for (size_t i = 0; i < rt->binding_count; ++i) {
         ui_binding_t *b = &rt->bindings[i];
         if (!b->meta) continue;
+
+        if (b->meta->has_vis_rule && b->obj) {
+            if (edgehmi_widget_eval_visible(b->meta, s_bus)) {
+                lv_obj_remove_flag(b->obj, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(b->obj, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
 
         if (b->meta->type == WIDGET_ALARM_LIST && s_hist && b->aux_label) {
             if (s_hist->next_alarm_id != s_last_alarm_seq) {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EdgeHMI Studio v2.3 — ESP32-S3 全栈工业组态与边缘仿真 IDE</title>
+  <title>EdgeHMI Studio v2.4 — ESP32-S3 全栈工业组态与边缘仿真 IDE</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -189,7 +189,7 @@
 </head>
 <body>
   <header>
-    <h1>EdgeHMI Studio v2.3 · ESP32-S3 全栈工业组态与边缘仿真 IDE</h1>
+    <h1>EdgeHMI Studio v2.4 · ESP32-S3 全栈工业组态与边缘仿真 IDE</h1>
     <div class="meta">
       <span class="pill accent" id="mb-pill">Modbus Block Read: --</span>
       <span class="pill" id="wan-pill">WAN: Wi-Fi</span>
@@ -284,8 +284,11 @@
             <button class="ctrl-btn danger" id="btn-del-widget" onclick="deleteSelectedWidget()" disabled>删除</button>
             <button class="ctrl-btn" id="btn-undo" onclick="undoConfig()" disabled>↶ 撤销</button>
             <button class="ctrl-btn" id="btn-redo" onclick="redoConfig()" disabled>↷ 重做</button>
+            <button class="ctrl-btn" onclick="alignSelectedWidget('left')" title="对齐左侧 X=24">左对齐</button>
+            <button class="ctrl-btn" onclick="alignSelectedWidget('centerX')" title="画布水平居中">水平居中</button>
+            <button class="ctrl-btn" onclick="alignSelectedWidget('top')" title="对齐顶部 Y=62">顶对齐</button>
           </div>
-          <div id="inspector-empty" style="font-size:12px;color:#64748b;">切换到“拖拽组态 (Design)”并点击画布上的任意控件即可编辑属性。</div>
+          <div id="inspector-empty" style="font-size:12px;color:#64748b;">切换到“拖拽组态 (Design)”并点击画布上的任意控件即可编辑属性（支持方向键 4px / Shift+方向键 1px 微调，Delete 删除）。</div>
           <div id="inspector-form" style="display:none;">
             <div class="insp-grid">
               <div class="insp-field"><label>控件 ID</label><input id="insp-id" type="text" readonly /></div>
@@ -296,7 +299,14 @@
               <div class="insp-field"><label>尺寸 W / H</label><div style="display:flex;gap:4px;"><input id="insp-w" type="number" style="width:50%;" /><input id="insp-h" type="number" style="width:50%;" /></div></div>
               <div class="insp-field"><label>量程 Min / Max</label><div style="display:flex;gap:4px;"><input id="insp-min" type="number" step="any" style="width:50%;" /><input id="insp-max" type="number" step="any" style="width:50%;" /></div></div>
               <div class="insp-field"><label>颜色 / 写入值</label><div style="display:flex;gap:4px;"><input id="insp-color" type="color" style="width:44px;padding:2px;" /><input id="insp-wval" type="number" step="any" placeholder="write_value" style="flex:1;" /></div></div>
-              <div class="insp-field" style="grid-column: span 2;"><label>二维码 / 图片源 (src)</label><input id="insp-src" type="text" placeholder="http://edgehmi.local" /></div>
+              <div class="insp-field" style="grid-column: span 2;">
+                <label>二维码 / 图片源 (src) · 支持上传 PNG/SVG 至 /api/asset</label>
+                <div style="display:flex;gap:6px;">
+                  <input id="insp-src" type="text" placeholder="http://192.168.4.1/setup 或 /api/asset/logo.png" style="flex:1;" />
+                  <input id="asset-file-input" type="file" accept=".png,.svg,.bmp,.jpg,.jpeg" style="display:none;" onchange="uploadAssetFile(this)" />
+                  <button class="ctrl-btn success" type="button" onclick="document.getElementById('asset-file-input').click()">上传图片</button>
+                </div>
+              </div>
             </div>
             <div class="insp-checks">
               <label><input type="checkbox" id="insp-confirm" /> 二次确认</label>
@@ -362,14 +372,16 @@
           <h3>局域网设备发现 (UDP 56888) · 真机实时镜像 · 固件 OTA</h3>
           <div class="btn-row" style="margin-bottom: 8px;">
             <button class="ctrl-btn primary" onclick="scanDevices()">扫描局域网 EdgeHMI 设备</button>
-            <button class="ctrl-btn" onclick="simulateFirmwareOta()">模拟推送固件 OTA (v1.2.0)</button>
+            <button class="ctrl-btn" onclick="simulateFirmwareOta()">模拟推送固件 OTA (v2.4.0)</button>
+            <a class="ctrl-btn success" href="/h5" target="_blank" style="text-decoration:none;">手机实时监控 (/h5)</a>
             <button class="ctrl-btn danger" id="btn-stop-mirror" onclick="stopMirror()" style="display:none;">退出真机镜像</button>
           </div>
           <div id="fleet-list" style="font-size:12px;color:#94a3b8;">点击“扫描局域网设备”自动发现同网段 ESP32-S3 / 仿真节点，可一键热推配置或进入 Live Mirror 实时远程看屏。</div>
         </div>
 
         <div class="panel">
-          <h3>WebSerial 浏览器串口直连（ESP32-S3 日志监控 &amp; 固件烧录入口）</h3>
+          <h3>WebSerial 浏览器串口直连 &amp; 单文件固件烧录（0x0 _merged.bin）</h3>
+          <div style="font-size:11.5px;color:#94a3b8;margin-bottom:6px;">CI 已自动生成单文件 <code>edgehmi_*_merged.bin</code>（内置开源 Noto Sans SC 中文字体与空片引导页），可直接用 ESP Web Flasher 或 <code>esptool --chip esp32s3 write-flash 0x0 edgehmi_waveshare_43_merged.bin</code> 零门槛烧录。</div>
           <div class="btn-row" style="margin-bottom: 8px;">
             <button class="ctrl-btn success" onclick="connectWebSerial()">连接 ESP32-S3 USB 串口 (115200)</button>
             <button class="ctrl-btn" onclick="disconnectWebSerial()">断开串口</button>
@@ -431,6 +443,74 @@ function escapeHtml(s) {
 
 function sanitizeColor(c, fallback = '#2DD4BF') {
   return /^#[0-9a-fA-F]{6}$/.test(String(c || '')) ? c : fallback;
+}
+
+function evalRuleOp(op, val, thr) {
+  if (op === '>') return val > thr;
+  if (op === '>=') return val >= thr;
+  if (op === '<') return val < thr;
+  if (op === '<=') return val <= thr;
+  if (op === '==') return Math.abs(val - thr) <= 1e-6;
+  if (op === '!=') return Math.abs(val - thr) > 1e-6;
+  return false;
+}
+
+function evalWidgetColor(w, val, fallback = '#2DD4BF') {
+  let col = sanitizeColor(w.color, fallback);
+  if (Array.isArray(w.color_rules)) {
+    for (const r of w.color_rules) {
+      if (evalRuleOp(r.op, val, Number(r.value))) {
+        col = sanitizeColor(r.color, col);
+      }
+    }
+  }
+  return col;
+}
+
+function evalWidgetVisible(w, tags) {
+  if (!w.visible_when || !w.visible_when.tag) return true;
+  const t = tags?.[w.visible_when.tag];
+  if (!t) return true;
+  return evalRuleOp(w.visible_when.op, Number(t.value), Number(w.visible_when.value));
+}
+
+async function uploadAssetFile(inputEl) {
+  const file = inputEl?.files?.[0];
+  if (!file) return;
+  const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40) || 'asset.png';
+  try {
+    const res = await fetch(`/api/asset?name=${encodeURIComponent(safeName)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() },
+      body: file
+    });
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById('insp-src').value = data.src;
+      setStatus(`图片已上传：${data.src} (${data.bytes} B)`, '#34d399');
+      await applyInspector();
+    } else {
+      setStatus('图片上传失败：' + (data.message || res.status), '#f87171');
+    }
+  } catch (e) {
+    setStatus('图片上传异常：' + e.message, '#f87171');
+  } finally {
+    inputEl.value = '';
+  }
+}
+
+async function alignSelectedWidget(mode) {
+  const page = getActivePage();
+  if (!page || !selectedWidgetId || !currentConfig) return;
+  const w = page.widgets.find(x => x.id === selectedWidgetId);
+  if (!w) return;
+  const dev = currentConfig.device || { width: 800, height: 480 };
+  pushUndoSnapshot();
+  if (mode === 'left') w.x = 24;
+  else if (mode === 'top') w.y = 62;
+  else if (mode === 'centerX') w.x = Math.max(0, Math.round((dev.width - w.w) / 2 / 4) * 4);
+  populateInspector(w);
+  await saveConfigRaw(JSON.stringify(currentConfig), `已对齐控件 ${w.id} -> (${w.x}, ${w.y})`);
 }
 
 function setStatus(msg, color = '#38bdf8') {
@@ -1037,7 +1117,7 @@ function syncEditor() {
   }
 }
 
-function renderGaugeSvg(w, val) {
+function renderGaugeSvg(w, val, dynCol) {
   const min = w.min ?? 0, max = w.max ?? 100;
   const pct = Math.max(0, Math.min(1, (val - min) / ((max - min) || 1)));
   const r = Math.max(10, Math.min(w.w, w.h) / 2 - 14);
@@ -1046,7 +1126,7 @@ function renderGaugeSvg(w, val) {
   const arcLen = circ * 0.75;
   const dash = arcLen * pct;
   const txt = escapeHtml(`${val.toFixed(w.decimals ?? 1)} ${w.unit || ''}`.trim());
-  const col = sanitizeColor(w.color, '#2DD4BF');
+  const col = dynCol || sanitizeColor(w.color, '#2DD4BF');
   return `<svg width="${w.w}" height="${w.h}">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#1e293b" stroke-width="14" stroke-dasharray="${arcLen} ${circ}" stroke-linecap="round" transform="rotate(135 ${cx} ${cy})" />
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="14" stroke-dasharray="${dash} ${circ}" stroke-linecap="round" transform="rotate(135 ${cx} ${cy})" />
@@ -1147,6 +1227,34 @@ window.addEventListener('mouseup', async () => {
   await saveConfigRaw(JSON.stringify(currentConfig), `拖拽已同步并热保存：${w.id} -> (${w.x}, ${w.y}) ${w.w}×${w.h}`);
 });
 
+window.addEventListener('keydown', async (ev) => {
+  if (!designMode || !selectedWidgetId || !currentConfig) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const page = getActivePage();
+  const w = page?.widgets?.find(x => x.id === selectedWidgetId);
+  if (!w) return;
+  if (ev.key === 'Delete') {
+    ev.preventDefault();
+    await deleteSelectedWidget();
+    return;
+  }
+  const step = ev.shiftKey ? 1 : 4;
+  let dx = 0, dy = 0;
+  if (ev.key === 'ArrowLeft') dx = -step;
+  else if (ev.key === 'ArrowRight') dx = step;
+  else if (ev.key === 'ArrowUp') dy = -step;
+  else if (ev.key === 'ArrowDown') dy = step;
+  else return;
+  ev.preventDefault();
+  const dev = currentConfig.device || { width: 800, height: 480 };
+  pushUndoSnapshot();
+  w.x = Math.max(0, Math.min(dev.width - w.w, w.x + dx));
+  w.y = Math.max(0, Math.min(dev.height - w.h, w.y + dy));
+  populateInspector(w);
+  await saveConfigRaw(JSON.stringify(currentConfig), `键盘微调 ${w.id} -> (${w.x}, ${w.y})`);
+});
+
 function renderHMI(state, forceRedraw = false) {
   lastState = state;
   if (designMode && !forceRedraw) return;
@@ -1222,8 +1330,10 @@ function renderHMI(state, forceRedraw = false) {
   }
 
   for (const w of page.widgets) {
+    if (!designMode && !evalWidgetVisible(w, state.tags)) continue;
     const tagObj = w.bind ? state.tags[w.bind] : null;
     const val = tagObj ? tagObj.value : 0;
+    const dynCol = evalWidgetColor(w, val, '#2DD4BF');
     const el = document.createElement(w.type === 'button' ? 'button' : 'div');
     el.className = `w w-${w.type}`;
     el.style.left = w.x + 'px';
@@ -1234,16 +1344,16 @@ function renderHMI(state, forceRedraw = false) {
     if (w.type === 'card' || w.type === 'label') {
       el.textContent = w.text || '';
     } else if (w.type === 'value') {
-      el.style.color = sanitizeColor(w.color, '#38bdf8');
+      el.style.color = evalWidgetColor(w, val, '#38bdf8');
       el.textContent = `${val.toFixed(w.decimals ?? 1)} ${w.unit || ''}`.trim();
     } else if (w.type === 'gauge') {
-      el.innerHTML = renderGaugeSvg(w, val);
+      el.innerHTML = renderGaugeSvg(w, val, dynCol);
     } else if (w.type === 'bar') {
       const pct = Math.max(0, Math.min(100, ((val - (w.min ?? 0)) / (((w.max ?? 100) - (w.min ?? 0)) || 1)) * 100));
       const fill = document.createElement('div');
       fill.className = 'w-bar-fill';
       fill.style.width = pct + '%';
-      fill.style.background = sanitizeColor(w.color, '#2DD4BF');
+      fill.style.background = dynCol;
       el.appendChild(fill);
     } else if (w.type === 'slider') {
       const inp = document.createElement('input');
@@ -1286,7 +1396,17 @@ function renderHMI(state, forceRedraw = false) {
     } else if (w.type === 'qrcode') {
       el.innerHTML = renderQrSvg(String(w.src || w.text || 'http://edgehmi.local'), Math.min(w.w, w.h));
     } else if (w.type === 'image') {
-      el.textContent = w.text || w.src || 'IMAGE';
+      if (typeof w.src === 'string' && w.src.startsWith('/api/asset/')) {
+        const img = document.createElement('img');
+        img.src = w.src;
+        img.alt = w.text || w.id;
+        img.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;border-radius:6px;';
+        el.style.border = 'none';
+        el.style.background = 'transparent';
+        el.appendChild(img);
+      } else {
+        el.textContent = w.text || w.src || 'IMAGE';
+      }
     } else if (w.type === 'dropdown') {
       const sel = document.createElement('select');
       const opts = String(w.text || 'Manual|Auto|Maint').split(/[\n|,]/);
@@ -1301,12 +1421,12 @@ function renderHMI(state, forceRedraw = false) {
       el.appendChild(sel);
     } else if (w.type === 'led') {
       const on = Math.abs(val) > 0.5;
-      const col = sanitizeColor(w.color, '#10B981');
+      const col = evalWidgetColor(w, val, '#10B981');
       el.style.background = on ? col : '#1e293b';
       el.style.boxShadow = on ? `0 0 12px ${col}` : 'none';
     } else if (w.type === 'badge') {
       const on = Math.abs(val) > 0.5;
-      el.style.background = on ? sanitizeColor(w.color, '#10b981') : '#334155';
+      el.style.background = on ? evalWidgetColor(w, val, '#10b981') : '#334155';
       el.textContent = on ? (w.true_text || 'ACTIVE') : (w.false_text || 'IDLE');
     } else if (w.type === 'button') {
       el.style.background = sanitizeColor(w.color, '#334155');

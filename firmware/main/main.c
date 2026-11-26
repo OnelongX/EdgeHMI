@@ -3,6 +3,7 @@
 #include "cloud_mqtt.h"
 #include "config_loader.h"
 #include "data_bus.h"
+#include "default_config.h"
 #include "discovery_service.h"
 #include "edgehmi_bsp.h"
 #include "fieldbus_ext.h"
@@ -422,13 +423,23 @@ void app_main(void) {
         if (epk_rc != EDGEHMI_OK) {
             char *buf = (char *)edgehmi_alloc_buf(65536);
             size_t len = 0;
+            bool loaded = false;
             if (buf && edgehmi_storage_read_active(buf, 65536, &len) == EDGEHMI_OK) {
                 char err[128] = {0};
-                if (reload_config_atomic(buf, err, sizeof(err)) != EDGEHMI_OK) {
+                if (reload_config_atomic(buf, err, sizeof(err)) == EDGEHMI_OK) {
+                    loaded = true;
+                } else {
                     ESP_LOGE(TAG, "Boot config invalid: %s", err);
                 }
             }
             free(buf);
+            if (!loaded) {
+                char err[128] = {0};
+                ESP_LOGI(TAG, "Empty flash detected — loading built-in Chinese factory guide config");
+                if (reload_config_atomic(EDGEHMI_FACTORY_DEFAULT_JSON, err, sizeof(err)) != EDGEHMI_OK) {
+                    ESP_LOGE(TAG, "Factory default config load failed: %s", err);
+                }
+            }
         }
     }
 

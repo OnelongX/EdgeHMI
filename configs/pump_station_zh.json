@@ -136,12 +136,12 @@
         { "id": "pump_badge",  "type": "badge",    "x": 632, "y": 16,  "w": 144, "h": 32, "bind": "pump_cmd", "color": "#10B981", "true_text": "水泵运行中", "false_text": "水泵已停机" },
 
         { "id": "card_tank",   "type": "card",     "x": 24,  "y": 62,  "w": 430, "h": 312, "text": "1 号蓄水池实时液位与电机工况" },
-        { "id": "gauge_level", "type": "gauge",    "x": 46,  "y": 108, "w": 180, "h": 180, "bind": "tank_level", "unit": "%", "min": 0, "max": 100, "decimals": 1, "color": "#2DD4BF" },
+        { "id": "gauge_level", "type": "gauge",    "x": 46,  "y": 108, "w": 180, "h": 180, "bind": "tank_level", "unit": "%", "min": 0, "max": 100, "decimals": 1, "color": "#2DD4BF", "color_rules": [{"op": ">=", "value": 75, "color": "#F59E0B"}, {"op": ">=", "value": 90, "color": "#EF4444"}] },
         { "id": "lbl_rpm",     "type": "label",    "x": 254, "y": 114, "w": 170, "h": 24, "text": "水泵当前转速" },
         { "id": "val_rpm",     "type": "value",    "x": 254, "y": 142, "w": 180, "h": 36, "bind": "pump_rpm", "unit": "转/分", "decimals": 0, "color": "#38BDF8" },
         { "id": "lbl_curr",    "type": "label",    "x": 254, "y": 200, "w": 170, "h": 24, "text": "主电机工作电流" },
-        { "id": "val_curr",    "type": "value",    "x": 254, "y": 228, "w": 180, "h": 36, "bind": "motor_curr", "unit": "A", "decimals": 1, "color": "#F59E0B" },
-        { "id": "bar_level",   "type": "bar",      "x": 46,  "y": 324, "w": 384, "h": 22, "bind": "tank_level", "min": 0, "max": 100, "color": "#2DD4BF" },
+        { "id": "val_curr",    "type": "value",    "x": 254, "y": 228, "w": 180, "h": 36, "bind": "motor_curr", "unit": "A", "decimals": 1, "color": "#34D399", "color_rules": [{"op": ">=", "value": 5.0, "color": "#F59E0B"}, {"op": ">=", "value": 8.5, "color": "#EF4444"}] },
+        { "id": "bar_level",   "type": "bar",      "x": 46,  "y": 324, "w": 384, "h": 22, "bind": "tank_level", "min": 0, "max": 100, "color": "#2DD4BF", "color_rules": [{"op": ">=", "value": 75, "color": "#F59E0B"}, {"op": ">=", "value": 90, "color": "#EF4444"}] },
 
         { "id": "card_telem",  "type": "card",     "x": 474, "y": 62,  "w": 302, "h": 312, "text": "水质温度与出水流量趋势" },
         { "id": "lbl_temp",    "type": "label",    "x": 496, "y": 102, "w": 220, "h": 22, "text": "池内水温" },

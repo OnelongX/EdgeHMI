@@ -51,8 +51,10 @@ def req_json(
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         nvs_file = Path(tmpdir) / "test_nvs.json"
+        assets_dir = Path(tmpdir) / "assets"
         env = dict(os.environ)
         env["EDGEHMI_NVS_PATH"] = str(nvs_file)
+        env["EDGEHMI_ASSETS_DIR"] = str(assets_dir)
         env["EDGEHMI_DISCOVERY_PORT"] = str(UDP_PORT)
         env["EDGEHMI_DEVICE_ID"] = "edgehmi-e2etest"
 
@@ -282,7 +284,53 @@ def main() -> int:
             code, bad_res = req_json("POST", "/api/config", json.dumps(bad_cfg), token=TOKEN)
             assert code == 422 and not bad_res["ok"]
 
-            print("ALL FULL STUDIO v2.3 + RECIPES + AUDIT + DBC + 4G/5G + OTA + SECURITY E2E TESTS PASSED.")
+            # 11. Responsive Mobile H5 Monitor (/h5) & Authenticated Image Asset Upload (/api/asset)
+            with urllib.request.urlopen(BASE + "/h5", timeout=5) as h5_resp:
+                h5_html = h5_resp.read().decode("utf-8")
+                assert h5_resp.status == 200 and "EdgeHMI 移动实时监控" in h5_html
+
+            tiny_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
+            # Unauth asset upload -> 401
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(BASE + "/api/asset?name=logo.png", data=tiny_png, method="POST"),
+                    timeout=5,
+                )
+                raise AssertionError("Expected 401 for unauth /api/asset")
+            except urllib.error.HTTPError as e:
+                assert e.code == 401
+
+            # Path traversal asset name -> 400
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        BASE + "/api/asset?name=..%2Fbad.png",
+                        data=tiny_png,
+                        headers={"Authorization": f"Bearer {TOKEN}"},
+                        method="POST",
+                    ),
+                    timeout=5,
+                )
+                raise AssertionError("Expected 400 for path traversal /api/asset")
+            except urllib.error.HTTPError as e:
+                assert e.code == 400
+
+            # Authorized PNG upload -> 200 + GET /api/asset/logo.png returns exact bytes
+            r_up = urllib.request.Request(
+                BASE + "/api/asset?name=logo.png",
+                data=tiny_png,
+                headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/octet-stream"},
+                method="POST",
+            )
+            with urllib.request.urlopen(r_up, timeout=5) as up_resp:
+                up_data = json.loads(up_resp.read().decode("utf-8"))
+                assert up_resp.status == 200 and up_data["ok"] and up_data["src"] == "/api/asset/logo.png"
+
+            with urllib.request.urlopen(BASE + "/api/asset/logo.png", timeout=5) as get_resp:
+                assert get_resp.status == 200 and get_resp.headers.get("Content-Type") == "image/png"
+                assert get_resp.read() == tiny_png
+
+            print("ALL FULL STUDIO v2.4 + H5 + ASSETS + RECIPES + AUDIT + DBC + 4G/5G + OTA + SECURITY E2E TESTS PASSED.")
             return 0
         finally:
             proc.terminate()
