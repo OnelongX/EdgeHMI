@@ -1,0 +1,181 @@
+{
+  "version": "2.3.0",
+  "device": {
+    "name": "智慧供水泵站 / 1号站",
+    "width": 800,
+    "height": 480,
+    "theme": "dark",
+    "poll_interval_ms": 250,
+    "watchdog_timeout_s": 10,
+    "idle_dim_s": 180,
+    "idle_brightness_pct": 15,
+    "engineer_pin": "1234",
+    "api_token": "edgehmi-secret-2026"
+  },
+  "modbus": {
+    "port": 1,
+    "baudrate": 9600,
+    "tx_pin": 17,
+    "rx_pin": 18,
+    "de_pin": 16,
+    "timeout_ms": 300,
+    "points": [
+      { "tag": "tank_level",    "slave": 1, "fc": 3, "addr": 100, "type": "u16",  "scale": 0.1, "offset": 0, "unit": "%",    "rw": "r",  "default": 68.5 },
+      { "tag": "pump_rpm",      "slave": 1, "fc": 3, "addr": 101, "type": "u16",  "scale": 1.0, "offset": 0, "unit": "转/分", "rw": "r",  "default": 1450 },
+      { "tag": "water_temp",    "slave": 1, "fc": 3, "addr": 102, "type": "i16",  "scale": 0.1, "offset": 0, "unit": "℃",    "rw": "r",  "default": 24.6 },
+      { "tag": "outlet_flow",   "slave": 1, "fc": 3, "addr": 103, "type": "u16",  "scale": 0.1, "offset": 0, "unit": "m³/h", "rw": "r",  "default": 12.4 },
+      { "tag": "motor_curr",    "slave": 1, "fc": 3, "addr": 104, "type": "u16",  "scale": 0.1, "offset": 0, "unit": "A",    "rw": "r",  "default": 3.8 },
+      { "tag": "target_level",  "slave": 1, "fc": 3, "addr": 200, "type": "u16",  "scale": 0.1, "offset": 0, "unit": "%",    "rw": "rw", "default": 75.0, "retentive": true },
+      { "tag": "run_mode",      "slave": 1, "fc": 3, "addr": 201, "type": "u16",  "scale": 1.0, "offset": 0, "unit": "",     "rw": "rw", "default": 1,    "retentive": true },
+      { "tag": "pump_cmd",      "slave": 1, "fc": 1, "addr": 1,   "type": "bool", "scale": 1.0, "offset": 0, "unit": "",     "rw": "rw", "default": 1 },
+      { "tag": "auto_mode",     "slave": 1, "fc": 1, "addr": 2,   "type": "bool", "scale": 1.0, "offset": 0, "unit": "",     "rw": "rw", "default": 1,    "retentive": true }
+    ]
+  },
+  "modbus_tcp": {
+    "enabled": false,
+    "server_enabled": true,
+    "server_port": 1502
+  },
+  "local_io": [
+    { "tag": "estop_di",  "pin": 11, "mode": "di", "active_low": true,  "default": 0 },
+    { "tag": "buzzer_do", "pin": 12, "mode": "do", "active_low": false, "default": 0, "retentive": true }
+  ],
+  "network": {
+    "ap_fallback": true,
+    "failover_policy": "wifi_primary",
+    "cellular": {
+      "enabled": true,
+      "generation": "5g_redcap",
+      "interface": "uart_ppp",
+      "apn": "cmnet",
+      "uart_port": 2,
+      "baudrate": 921600,
+      "tx_pin": 13,
+      "rx_pin": 14
+    }
+  },
+  "recipes": [
+    {
+      "id": "peak_supply",
+      "name": "高峰满载保供",
+      "items": [
+        { "tag": "target_level", "value": 85.0 },
+        { "tag": "run_mode", "value": 1 },
+        { "tag": "auto_mode", "value": 1 },
+        { "tag": "pump_cmd", "value": 1 }
+      ]
+    },
+    {
+      "id": "night_eco",
+      "name": "夜间低谷节能",
+      "items": [
+        { "tag": "target_level", "value": 55.0 },
+        { "tag": "run_mode", "value": 2 },
+        { "tag": "auto_mode", "value": 1 }
+      ]
+    }
+  ],
+  "schedules": [
+    { "id": "sched_peak", "enabled": true, "time": "06:30", "recipe_id": "peak_supply" },
+    { "id": "sched_eco",  "enabled": true, "time": "23:00", "recipe_id": "night_eco" }
+  ],
+  "rules": [
+    {
+      "id": "rule_high_level_stop",
+      "desc": "水箱高液位联锁停泵（含3%滞环防抖）",
+      "enabled": true,
+      "enforce": true,
+      "when": { "tag": "tank_level", "op": ">=", "value": 92.0, "hysteresis": 3.0, "debounce_ms": 400 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
+    },
+    {
+      "id": "rule_high_level_alarm",
+      "desc": "高液位声光预警",
+      "enabled": true,
+      "when": { "tag": "tank_level", "op": ">=", "value": 90.0, "hysteresis": 2.0, "debounce_ms": 300 },
+      "then": { "action": "alarm", "level": "warn", "message": "1号蓄水池液位过高（>=90%），请注意监控！" }
+    },
+    {
+      "id": "rule_overcurr_trip",
+      "desc": "电机过流强制停泵保护",
+      "enabled": true,
+      "enforce": true,
+      "when": { "tag": "motor_curr", "op": ">", "value": 8.5, "hysteresis": 0.5, "debounce_ms": 200 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
+    },
+    {
+      "id": "rule_overcurr_alarm",
+      "desc": "电机过流严重告警",
+      "enabled": true,
+      "when": { "tag": "motor_curr", "op": ">", "value": 8.5, "hysteresis": 0.5, "debounce_ms": 200 },
+      "then": { "action": "alarm", "level": "critical", "message": "主水泵电机过流跳闸（>8.5A），已强制锁定！" }
+    },
+    {
+      "id": "rule_comm_loss_stop",
+      "desc": "RS485断线安全停泵",
+      "enabled": true,
+      "enforce": true,
+      "when": { "on_comm_loss": true, "tag": "tank_level", "debounce_ms": 300 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
+    },
+    {
+      "id": "rule_comm_loss_alarm",
+      "desc": "RS485断线严重告警",
+      "enabled": true,
+      "when": { "on_comm_loss": true, "tag": "tank_level", "debounce_ms": 300 },
+      "then": { "action": "alarm", "level": "critical", "message": "RS485 总线通讯中断，已触发断线安全停泵！" }
+    }
+  ],
+  "pages": [
+    {
+      "id": "overview",
+      "title": "智慧供水泵站 — 主监控",
+      "widgets": [
+        { "id": "title_lbl",   "type": "label",    "x": 24,  "y": 16,  "w": 360, "h": 34, "text": "智慧供水泵站（北区 1 号蓄水池）" },
+        { "id": "led_run",     "type": "led",      "x": 598, "y": 20,  "w": 24,  "h": 24, "bind": "pump_cmd", "color": "#10B981" },
+        { "id": "pump_badge",  "type": "badge",    "x": 632, "y": 16,  "w": 144, "h": 32, "bind": "pump_cmd", "color": "#10B981", "true_text": "水泵运行中", "false_text": "水泵已停机" },
+
+        { "id": "card_tank",   "type": "card",     "x": 24,  "y": 62,  "w": 430, "h": 312, "text": "1 号蓄水池实时液位与电机工况" },
+        { "id": "gauge_level", "type": "gauge",    "x": 46,  "y": 108, "w": 180, "h": 180, "bind": "tank_level", "unit": "%", "min": 0, "max": 100, "decimals": 1, "color": "#2DD4BF" },
+        { "id": "lbl_rpm",     "type": "label",    "x": 254, "y": 114, "w": 170, "h": 24, "text": "水泵当前转速" },
+        { "id": "val_rpm",     "type": "value",    "x": 254, "y": 142, "w": 180, "h": 36, "bind": "pump_rpm", "unit": "转/分", "decimals": 0, "color": "#38BDF8" },
+        { "id": "lbl_curr",    "type": "label",    "x": 254, "y": 200, "w": 170, "h": 24, "text": "主电机工作电流" },
+        { "id": "val_curr",    "type": "value",    "x": 254, "y": 228, "w": 180, "h": 36, "bind": "motor_curr", "unit": "A", "decimals": 1, "color": "#F59E0B" },
+        { "id": "bar_level",   "type": "bar",      "x": 46,  "y": 324, "w": 384, "h": 22, "bind": "tank_level", "min": 0, "max": 100, "color": "#2DD4BF" },
+
+        { "id": "card_telem",  "type": "card",     "x": 474, "y": 62,  "w": 302, "h": 312, "text": "水质温度与出水流量趋势" },
+        { "id": "lbl_temp",    "type": "label",    "x": 496, "y": 102, "w": 220, "h": 22, "text": "池内水温" },
+        { "id": "val_temp",    "type": "value",    "x": 496, "y": 128, "w": 220, "h": 36, "bind": "water_temp", "unit": "℃", "decimals": 1, "color": "#34D399" },
+        { "id": "lbl_flow",    "type": "label",    "x": 496, "y": 180, "w": 220, "h": 22, "text": "瞬时出水流量" },
+        { "id": "val_flow",    "type": "value",    "x": 496, "y": 206, "w": 220, "h": 36, "bind": "outlet_flow", "unit": "m³/h", "decimals": 1, "color": "#38BDF8" },
+        { "id": "chart_flow",  "type": "chart",    "x": 496, "y": 256, "w": 258, "h": 98, "bind": "outlet_flow", "min": 0, "max": 25, "color": "#2DD4BF" },
+
+        { "id": "btn_start",   "type": "button",   "x": 24,  "y": 396, "w": 138, "h": 54, "text": "启动主水泵", "bind": "pump_cmd", "write_value": 1, "color": "#10B981" },
+        { "id": "btn_stop",    "type": "button",   "x": 174, "y": 396, "w": 138, "h": 54, "text": "紧急停泵", "bind": "pump_cmd", "write_value": 0, "color": "#EF4444", "confirm": true, "confirm_text": "确认紧急停止 1 号主水泵？", "pin_required": true },
+        { "id": "dd_mode",     "type": "dropdown", "x": 326, "y": 403, "w": 152, "h": 40, "bind": "run_mode", "text": "手动控制|自动恒压|夜间节能" },
+        { "id": "lbl_auto",    "type": "label",    "x": 492, "y": 410, "w": 72,  "h": 26, "text": "自动联锁" },
+        { "id": "sw_auto",     "type": "switch",   "x": 566, "y": 406, "w": 62,  "h": 34, "bind": "auto_mode", "color": "#2DD4BF" },
+        { "id": "btn_diag",    "type": "button",   "x": 642, "y": 396, "w": 134, "h": 54, "text": "参数与告警 →", "nav_page": "diagnostics", "color": "#334155" }
+      ]
+    },
+    {
+      "id": "diagnostics",
+      "title": "参数设定与告警诊断",
+      "widgets": [
+        { "id": "diag_title",  "type": "label",      "x": 24,  "y": 16,  "w": 420, "h": 34, "text": "掉电设定参数 · 实时告警 · 扫码运维" },
+        { "id": "diag_card",   "type": "card",       "x": 24,  "y": 62,  "w": 450, "h": 308, "text": "目标液位设定（NVS 掉电保持）与历史趋势" },
+        { "id": "lbl_tgt",     "type": "label",      "x": 48,  "y": 100, "w": 190, "h": 22, "text": "目标液位上限设定" },
+        { "id": "spn_tgt",     "type": "spinbox",    "x": 48,  "y": 126, "w": 224, "h": 42, "bind": "target_level", "unit": "%", "min": 20, "max": 95, "step": 2.5, "decimals": 1, "color": "#2DD4BF" },
+        { "id": "diag_curr",   "type": "value",      "x": 292, "y": 126, "w": 160, "h": 42, "bind": "motor_curr", "unit": "A", "decimals": 2, "color": "#F59E0B" },
+        { "id": "diag_chart",  "type": "chart",      "x": 48,  "y": 184, "w": 404, "h": 168, "bind": "tank_level", "min": 0, "max": 100, "color": "#38BDF8" },
+
+        { "id": "card_alm",    "type": "card",       "x": 494, "y": 62,  "w": 282, "h": 308, "text": "实时告警列表与手机扫码配网" },
+        { "id": "wid_alarms",  "type": "alarm_list", "x": 510, "y": 102, "w": 250, "h": 146, "color": "#EF4444" },
+        { "id": "wid_qr",      "type": "qrcode",     "x": 510, "y": 262, "w": 92,  "h": 92,  "src": "http://192.168.4.1/setup", "text": "扫码配网" },
+        { "id": "lbl_qr",      "type": "label",      "x": 612, "y": 274, "w": 152, "h": 64,  "text": "微信扫码打开现场 Wi-Fi / 4G / 5G 配网页" },
+
+        { "id": "btn_back",    "type": "button",     "x": 24,  "y": 396, "w": 200, "h": 54, "text": "← 返回主监控界面", "nav_page": "overview", "color": "#334155" }
+      ]
+    }
+  ]
+}

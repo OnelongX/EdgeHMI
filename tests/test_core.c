@@ -674,6 +674,92 @@ static void test_recipes_schedules_audit_and_mbtcp_gateway(void) {
     printf("  [PASS] test_recipes_schedules_audit_and_mbtcp_gateway (Modbus GW + Recipes + Audit + Scheduler)\n");
 }
 
+static bool is_valid_utf8(const char *s) {
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        if (*p < 0x80u) {
+            p += 1;
+        } else if ((*p & 0xE0u) == 0xC0u) {
+            if ((p[1] & 0xC0u) != 0x80u) return false;
+            p += 2;
+        } else if ((*p & 0xF0u) == 0xE0u) {
+            if ((p[1] & 0xC0u) != 0x80u || (p[2] & 0xC0u) != 0x80u) return false;
+            p += 3;
+        } else if ((*p & 0xF8u) == 0xF0u) {
+            if ((p[1] & 0xC0u) != 0x80u || (p[2] & 0xC0u) != 0x80u || (p[3] & 0xC0u) != 0x80u) return false;
+            p += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void test_utf8_chinese_support(void) {
+    /* 1. UTF-8 multi-byte boundary-safe truncation (must never cut a 3-byte Chinese char in half) */
+    const char *zh_long = "\xE6\x99\xBA\xE6\x85\xA7\xE4\xBE\x9B\xE6\xB0\xB4\xE6\xB3\xB5\xE7\xAB\x99"; /* "智慧供水泵站" = 18 bytes */
+    char tiny[8]; /* cap=8 -> max 7 bytes -> must cleanly keep 2 chars (6 bytes), NOT 7 bytes! */
+    edgehmi_copy_str(tiny, sizeof(tiny), zh_long);
+    assert(strlen(tiny) == 6 && is_valid_utf8(tiny));
+
+    char esc_tiny[8];
+    size_t elen = edgehmi_json_escape(zh_long, esc_tiny, sizeof(esc_tiny));
+    assert(elen == 6 && is_valid_utf8(esc_tiny));
+
+    /* 2. Full Chinese industrial config loading (device, widgets, dropdown, led, recipes, alarms) */
+    char *zraw = read_file_all("configs/pump_station_zh.json");
+    edgehmi_config_t *zcfg = (edgehmi_config_t *)calloc(1, sizeof(edgehmi_config_t));
+    edgehmi_bus_t zbus;
+    edgehmi_bus_init(&zbus, NULL, NULL, NULL);
+    char err[128] = {0};
+    assert(edgehmi_config_load_json(zraw, zcfg, &zbus, err, sizeof(err)) == EDGEHMI_OK);
+    assert(is_valid_utf8(zcfg->device_name) && strlen(zcfg->device_name) > 6);
+    assert(zcfg->recipe_count == 2 && is_valid_utf8(zcfg->recipes[0].name));
+
+    /* Verify dropdown & led widget types parsed from Chinese config */
+    bool found_dd = false, found_led = false;
+    for (size_t i = 0; i < zcfg->pages[0].widget_count; ++i) {
+        const edgehmi_widget_t *w = &zcfg->pages[0].widgets[i];
+        assert(is_valid_utf8(w->text));
+        if (w->type == WIDGET_DROPDOWN) found_dd = true;
+        if (w->type == WIDGET_LED) found_led = true;
+    }
+    assert(found_dd && found_led);
+
+    /* 3. Chinese alarm + audit JSON & discovery announce preserve valid UTF-8 */
+    edgehmi_history_t *zhist = (edgehmi_history_t *)calloc(1, sizeof(edgehmi_history_t));
+    edgehmi_history_init(zhist, &zbus);
+    edgehmi_alarm_event_t aevt;
+    memset(&aevt, 0, sizeof(aevt));
+    strcpy(aevt.rule_id, "rule_high_level_alarm");
+    aevt.level = ALARM_CRITICAL;
+    aevt.active = true;
+    aevt.timestamp_ms = 12345;
+    edgehmi_copy_str(aevt.message, sizeof(aevt.message), zcfg->rules[1].alarm_msg);
+    edgehmi_history_record_alarm(zhist, &aevt);
+
+    char jbuf[1024];
+    assert(edgehmi_history_export_alarms_json(zhist, jbuf, sizeof(jbuf)) > 20);
+    assert(is_valid_utf8(jbuf) && strstr(jbuf, "90%") != NULL);
+
+    edgehmi_device_info_t dinfo;
+    memset(&dinfo, 0, sizeof(dinfo));
+    strcpy(dinfo.device_id, "edgehmi-zh01");
+    edgehmi_copy_str(dinfo.name, sizeof(dinfo.name), zcfg->device_name);
+    strcpy(dinfo.fw_version, "2.3.0");
+    strcpy(dinfo.cfg_version, zcfg->version);
+    dinfo.http_port = 80;
+    dinfo.width = 800;
+    dinfo.height = 480;
+    assert(edgehmi_discovery_build_announce(&dinfo, jbuf, sizeof(jbuf)) > 20);
+    assert(is_valid_utf8(jbuf));
+
+    free(zhist);
+    free(zcfg);
+    free(zraw);
+    printf("  [PASS] test_utf8_chinese_support (UTF-8 boundary truncation + pump_station_zh.json + JSON/Discovery)\n");
+}
+
 int main(void) {
     printf("Running EdgeHMI Full C11 Core Unit Tests...\n");
     test_data_bus();
@@ -687,6 +773,7 @@ int main(void) {
     test_modbus_tcp_and_can_and_history();
     test_cellular_4g_5g_and_failover();
     test_recipes_schedules_audit_and_mbtcp_gateway();
+    test_utf8_chinese_support();
     printf("ALL FULL C11 CORE TESTS PASSED.\n");
     return 0;
 }

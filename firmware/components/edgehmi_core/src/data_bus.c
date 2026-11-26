@@ -26,6 +26,10 @@ void edgehmi_copy_str(char *dst, size_t cap, const char *src) {
     size_t len = strlen(src);
     if (len >= cap) {
         len = cap - 1;
+        /* Never cut in the middle of a multi-byte UTF-8 sequence (e.g. 3-byte CJK char) */
+        while (len > 0 && (((unsigned char)src[len] & 0xC0u) == 0x80u)) {
+            len--;
+        }
     }
     memcpy(dst, src, len);
     dst[len] = '\0';
@@ -310,10 +314,18 @@ size_t edgehmi_json_escape(const char *src, char *dst, size_t dst_cap) {
             /* Strip other ASCII control chars */
             continue;
         } else {
-            if (w + 1 >= dst_cap) {
+            /* Compute full UTF-8 sequence length so we never emit a half-truncated CJK character */
+            size_t seq_len = 1;
+            if ((c & 0xE0u) == 0xC0u) seq_len = 2;
+            else if ((c & 0xF0u) == 0xE0u) seq_len = 3;
+            else if ((c & 0xF8u) == 0xF0u) seq_len = 4;
+            if (w + seq_len >= dst_cap) {
                 break;
             }
             dst[w++] = (char)c;
+            for (size_t k = 1; k < seq_len && src[i + 1] != '\0'; ++k) {
+                dst[w++] = src[++i];
+            }
         }
     }
     dst[w] = '\0';

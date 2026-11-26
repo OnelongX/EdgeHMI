@@ -31,8 +31,8 @@ jobs:
 
       - name: Validate Industrial Config Templates & Font Subsetter
         run: |
-          python3 tools/validate_config.py configs/pump_station.json configs/solar_inverter.json
-          python3 tools/build_font.py configs/pump_station.json configs/solar_inverter.json
+          python3 tools/validate_config.py configs/pump_station.json configs/solar_inverter.json configs/pump_station_zh.json
+          python3 tools/build_font.py configs/pump_station.json configs/solar_inverter.json configs/pump_station_zh.json
 
       - name: Run Studio v2.0 Full E2E + Security + Historian Suite
         run: python3 tests/test_studio_e2e.py

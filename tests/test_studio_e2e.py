@@ -221,7 +221,7 @@ def main() -> int:
             # 8. History CSV export, Alarm Ack & Live Device Mirror Proxy (auth + SSRF + 200)
             time.sleep(1.1)
             with urllib.request.urlopen(BASE + "/api/history.csv", timeout=5) as csv_resp:
-                csv_text = csv_resp.read().decode("utf-8")
+                csv_text = csv_resp.read().decode("utf-8-sig")
                 assert csv_resp.status == 200 and csv_text.startswith("timestamp_ms,"), f"Bad CSV: {csv_text[:80]}"
                 assert len(csv_text.strip().splitlines()) >= 2
 

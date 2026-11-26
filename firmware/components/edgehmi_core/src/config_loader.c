@@ -14,19 +14,7 @@ static void set_err(char *buf, size_t len, const char *msg) {
 }
 
 static void copy_str(char *dst, size_t cap, const char *src) {
-    if (!dst || cap == 0) {
-        return;
-    }
-    if (!src) {
-        dst[0] = '\0';
-        return;
-    }
-    size_t n = strlen(src);
-    if (n >= cap) {
-        n = cap - 1;
-    }
-    memcpy(dst, src, n);
-    dst[n] = '\0';
+    edgehmi_copy_str(dst, cap, src);
 }
 
 static edgehmi_tag_type_t parse_tag_type(const char *s, bool *ok) {

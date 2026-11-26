@@ -757,7 +757,7 @@ def make_handler(runtime: IndustrialRuntime):
                 snap = runtime.snapshot()
                 self._send_json(200, {"audits": snap["audits"]})
             elif self.path == "/api/history.csv":
-                csv_bytes = runtime.export_history_csv().encode("utf-8")
+                csv_bytes = ("\ufeff" + runtime.export_history_csv()).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
                 self.send_header("Content-Disposition", 'attachment; filename="edgehmi_history.csv"')
