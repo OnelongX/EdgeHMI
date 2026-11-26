@@ -42,10 +42,10 @@ jobs:
           node -e "const fs=require('fs'); const h=fs.readFileSync('studio/web/index.html','utf8'); const m=h.match(/<script>([\s\S]*?)<\/script>/); new Function(m[1]); console.log('JS_SYNTAX_OK');"
 
   esp32s3-firmware:
-    name: ESP-IDF 5.3 ESP32-S3 Build (${{ matrix.board_name }})
+    name: ESP-IDF 6.1.1 ESP32-S3 Build (${{ matrix.board_name }})
     runs-on: ubuntu-latest
     container:
-      image: espressif/idf:v5.3.1
+      image: espressif/idf:v6.1.1
     strategy:
       fail-fast: false
       matrix:
