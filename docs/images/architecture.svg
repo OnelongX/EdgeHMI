@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 560" width="1160" height="560">
+  <defs>
+    <linearGradient id="archBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#070d18"/>
+      <stop offset="100%" stop-color="#0d172a"/>
+    </linearGradient>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8"/>
+    </marker>
+    <marker id="arrowTeal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#2dd4bf"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <rect width="1160" height="560" rx="16" fill="url(#archBg)" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- Header -->
+  <text x="36" y="42" fill="#f8fafc" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="20" font-weight="700">EdgeHMI Dual-Core Industrial Architecture (ESP32-S3 + PC Studio)</text>
+  <text x="36" y="64" fill="#94a3b8" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="13">网络与运维完全隔离在 Core 0，现场总线、强制安全联锁与 LVGL 9 渲染独占 Core 1</text>
+
+  <!-- Column 1: PC Studio & CLI -->
+  <g transform="translate(32, 92)">
+    <rect width="236" height="432" rx="14" fill="#0f1b2e" stroke="#0ea5e9" stroke-width="1.5"/>
+    <rect width="236" height="38" rx="14" fill="#0c2d48"/>
+    <text x="118" y="24" text-anchor="middle" fill="#7dd3fc" font-family="Segoe UI, sans-serif" font-size="14" font-weight="700">PC Studio &amp; CLI Toolchain</text>
+
+    <rect x="16" y="56" width="204" height="76" rx="10" fill="#132238" stroke="#1e3a5f"/>
+    <text x="28" y="80" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Drag-and-Drop Studio</text>
+    <text x="28" y="100" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• 800×480 Live Simulator</text>
+    <text x="28" y="118" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• Visual Property Inspector</text>
+
+    <rect x="16" y="148" width="204" height="76" rx="10" fill="#132238" stroke="#1e3a5f"/>
+    <text x="28" y="172" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Static Config Validator</text>
+    <text x="28" y="192" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• JSON Schema + Boundary</text>
+    <text x="28" y="210" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• SRAM / PSRAM / NVS Check</text>
+
+    <rect x="16" y="240" width="204" height="76" rx="10" fill="#132238" stroke="#1e3a5f"/>
+    <text x="28" y="264" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Fleet Discovery &amp; Push</text>
+    <text x="28" y="284" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• UDP 56888 + mDNS Scan</text>
+    <text x="28" y="302" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• Bearer Auth Hot-Reload</text>
+
+    <rect x="16" y="332" width="204" height="82" rx="10" fill="#132238" stroke="#1e3a5f"/>
+    <text x="28" y="356" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">EPK1 OTA Packager</text>
+    <text x="28" y="376" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• SHA-256 + CRC32 Header</text>
+    <text x="28" y="394" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11.5">• Push / Pull / Offline SD</text>
+  </g>
+
+  <!-- Column 2: ESP32-S3 SoC Container -->
+  <g transform="translate(316, 92)">
+    <rect width="584" height="432" rx="14" fill="#0b1524" stroke="#2dd4bf" stroke-width="1.8"/>
+    <rect width="584" height="38" rx="14" fill="#0d2f3b"/>
+    <text x="292" y="24" text-anchor="middle" fill="#5eead4" font-family="Segoe UI, sans-serif" font-size="14" font-weight="700">ESP32-S3 Industrial Runtime (ESP-IDF 5.x · Pure C11 · Static Pools)</text>
+
+    <!-- Core 0 Box -->
+    <g transform="translate(16, 54)">
+      <rect width="262" height="258" rx="10" fill="#101d30" stroke="#38bdf8" stroke-width="1.2"/>
+      <text x="14" y="24" fill="#38bdf8" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Core 0 · Network &amp; OTA Plane</text>
+
+      <rect x="12" y="38" width="238" height="58" rx="8" fill="#162740" stroke="#1e3a5f"/>
+      <text x="22" y="58" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700">HTTP Config &amp; Telemetry API</text>
+      <text x="22" y="76" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Constant-Time Bearer · PSRAM Buf</text>
+      <text x="22" y="90" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Dry-Run Staging → Atomic Swap</text>
+
+      <rect x="12" y="108" width="238" height="64" rx="8" fill="#162740" stroke="#1e3a5f"/>
+      <text x="22" y="128" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700">Dual-Mode Firmware OTA</text>
+      <text x="22" y="146" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Streaming Push / HTTPS Pull / EPK</text>
+      <text x="22" y="162" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">A/B Partition + Auto-Rollback</text>
+
+      <rect x="12" y="184" width="238" height="60" rx="8" fill="#162740" stroke="#1e3a5f"/>
+      <text x="22" y="204" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700">LAN Discovery Responder</text>
+      <text x="22" y="222" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">mDNS (_edgehmi._tcp) + UDP 56888</text>
+      <text x="22" y="236" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Mutex-Safe Live Health Snapshot</text>
+    </g>
+
+    <!-- Core 1 Box -->
+    <g transform="translate(306, 54)">
+      <rect width="262" height="258" rx="10" fill="#101d30" stroke="#10b981" stroke-width="1.2"/>
+      <text x="14" y="24" fill="#34d399" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Core 1 · Deterministic RT Plane</text>
+
+      <rect x="12" y="38" width="238" height="60" rx="8" fill="#142d2b" stroke="#1f4e48"/>
+      <text x="22" y="58" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700">Modbus RTU Block Scanner</text>
+      <text x="22" y="76" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Auto-Coalesce · ABCD/CDAB/BADC</text>
+      <text x="22" y="90" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Retry + Boot BAD + Loop TWDT Feed</text>
+
+      <rect x="12" y="108" width="238" height="64" rx="8" fill="#142d2b" stroke="#1f4e48"/>
+      <text x="22" y="128" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700">Interlock &amp; Fail-Safe Engine</text>
+      <text x="22" y="146" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">AND/OR · Hysteresis · Debounce</text>
+      <text x="22" y="162" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Continuous enforce + Comm-Loss</text>
+
+      <rect x="12" y="184" width="238" height="60" rx="8" fill="#142d2b" stroke="#1f4e48"/>
+      <text x="22" y="204" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700">LVGL 9 Declarative UI Engine</text>
+      <text x="22" y="222" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Per-Widget Version Sync · Safe Swap</text>
+      <text x="22" y="236" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">PIN Modal · Comm-Loss Banner</text>
+    </g>
+
+    <!-- Shared Memory / Persistence Footer inside ESP32-S3 -->
+    <g transform="translate(16, 326)">
+      <rect width="552" height="90" rx="10" fill="#131f33" stroke="#475569" stroke-dasharray="4 3"/>
+      <text x="276" y="22" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Shared Thread-Safe Data Bus &amp; Non-Volatile Flash Layout</text>
+
+      <rect x="14" y="34" width="166" height="44" rx="7" fill="#0f172a" stroke="#334155"/>
+      <text x="97" y="53" text-anchor="middle" fill="#38bdf8" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">EdgeHMI Data Bus</text>
+      <text x="97" y="69" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="10.5">128 Tags · Quality · Version</text>
+
+      <rect x="193" y="34" width="166" height="44" rx="7" fill="#0f172a" stroke="#334155"/>
+      <text x="276" y="53" text-anchor="middle" fill="#2dd4bf" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">LittleFS (cfg_fs)</text>
+      <text x="276" y="69" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="10.5">active / staging / backup.json</text>
+
+      <rect x="372" y="34" width="166" height="44" rx="7" fill="#0f172a" stroke="#334155"/>
+      <text x="455" y="53" text-anchor="middle" fill="#f59e0b" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">Encrypted NVS + OTA</text>
+      <text x="455" y="69" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="10.5">FNV-1a Safe Key · Boot-OK</text>
+    </g>
+
+    <!-- Core 0 -> Core 1 Sync Arrow -->
+    <line x1="278" y1="184" x2="306" y2="184" stroke="#2dd4bf" stroke-width="2" marker-end="url(#arrowTeal)"/>
+  </g>
+
+  <!-- Column 3: Fieldbus Industrial Devices -->
+  <g transform="translate(948, 92)">
+    <rect width="180" height="432" rx="14" fill="#17141f" stroke="#f59e0b" stroke-width="1.5"/>
+    <rect width="180" height="38" rx="14" fill="#352512"/>
+    <text x="90" y="24" text-anchor="middle" fill="#fcd34d" font-family="Segoe UI, sans-serif" font-size="14" font-weight="700">RS485 Fieldbus</text>
+
+    <rect x="14" y="60" width="152" height="72" rx="10" fill="#1e1b29" stroke="#78350f"/>
+    <text x="90" y="88" text-anchor="middle" fill="#fde68a" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">PLC / Pump VFD</text>
+    <text x="90" y="109" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">Level · Flow · Current</text>
+
+    <rect x="14" y="152" width="152" height="72" rx="10" fill="#1e1b29" stroke="#78350f"/>
+    <text x="90" y="180" text-anchor="middle" fill="#fde68a" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Solar Inverter</text>
+    <text x="90" y="201" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">PV · Zero-Export Limit</text>
+
+    <rect x="14" y="244" width="152" height="72" rx="10" fill="#1e1b29" stroke="#78350f"/>
+    <text x="90" y="272" text-anchor="middle" fill="#fde68a" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Smart Meter / BMS</text>
+    <text x="90" y="293" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">CDAB Float32 · SOC</text>
+
+    <rect x="14" y="336" width="152" height="72" rx="10" fill="#1e1b29" stroke="#78350f"/>
+    <text x="90" y="364" text-anchor="middle" fill="#fde68a" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">LCD + Touch</text>
+    <text x="90" y="385" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">RGB 800×480 · GT911</text>
+  </g>
+
+  <!-- Cross-column arrows -->
+  <line x1="268" y1="220" x2="314" y2="220" stroke="#38bdf8" stroke-width="2.2" marker-end="url(#arrowBlue)" marker-start="url(#arrowBlue)"/>
+  <text x="291" y="208" text-anchor="middle" fill="#7dd3fc" font-family="Segoe UI, sans-serif" font-size="10.5" font-weight="600">Wi-Fi / LAN</text>
+
+  <line x1="900" y1="220" x2="946" y2="220" stroke="#f59e0b" stroke-width="2.2" marker-end="url(#arrowAmber)" marker-start="url(#arrowAmber)"/>
+  <text x="923" y="208" text-anchor="middle" fill="#fcd34d" font-family="Segoe UI, sans-serif" font-size="10.5" font-weight="600">RS485</text>
+</svg>

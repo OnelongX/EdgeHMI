@@ -568,6 +568,8 @@ async function loadTemplate(name) {
   const r = await postJson('/api/load_template', { name });
   if (r.data.ok) {
     currentPageId = null;
+    selectedWidgetId = null;
+    populateInspector(null);
     editorLoaded = false;
     setStatus(`已热切换工业模板：${name}`, '#34d399');
   }
