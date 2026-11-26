@@ -5,8 +5,8 @@
 <br/>
 
 [![CI](https://github.com/OnelongX/EdgeHMI/actions/workflows/ci.yml/badge.svg)](https://github.com/OnelongX/EdgeHMI/actions/workflows/ci.yml)
-[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.x-E7352C?style=for-the-badge&logo=espressif&logoColor=white)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
-[![LVGL](https://img.shields.io/badge/LVGL-9.x-0EA5E9?style=for-the-badge)](https://lvgl.io/)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-6.1.1-E7352C?style=for-the-badge&logo=espressif&logoColor=white)](https://docs.espressif.com/projects/esp-idf/en/v6.1.1/esp32s3/)
+[![LVGL](https://img.shields.io/badge/LVGL-9.6-0EA5E9?style=for-the-badge)](https://lvgl.io/)
 [![Core](https://img.shields.io/badge/Core-Pure%20C11%20Zero--GC-14B8A6?style=for-the-badge)](firmware/components/edgehmi_core)
 [![Protocol](https://img.shields.io/badge/Fieldbus-Modbus%20%2B%20CAN-F59E0B?style=for-the-badge)](firmware/components/edgehmi_core/src/modbus_rtu.c)
 [![WAN](https://img.shields.io/badge/WAN-Wi--Fi%20%2B%204G%20%2B%205G%20RedCap-8B5CF6?style=for-the-badge)](firmware/main/cellular_modem.c)
@@ -88,21 +88,22 @@ esp32-ind-hmi/
 ├── docs/
 │   ├── ARCHITECTURE.md                # 架构与协议设计说明
 │   └── images/                        # README 矢量图与实时界面截图
-├── firmware/                          # ESP-IDF 5.x 双核固件工程
+├── firmware/                          # ESP-IDF 6.1.1 双核固件工程（同时向后兼容 5.3+）
 │   ├── partitions.csv                 # 双 OTA (ota_0/ota_1) + LittleFS + NVS 分区表
-│   ├── sdkconfig.defaults             # 开发默认配置（PSRAM / TWDT / LVGL）
+│   ├── sdkconfig.defaults             # 开发默认配置（PSRAM / TWDT / PPPoS / LVGL 9）
 │   ├── sdkconfig.defaults.prod        # 量产安全强化（Secure Boot v2 + Flash/NVS 加密）
 │   ├── components/
 │   │   ├── edgehmi_core/              # 纯 C11 核心库（可脱离 ESP-IDF 宿主机独立编译测试）
-│   │   │   ├── include/ & src/        # data_bus / modbus_rtu / modbus_tcp / can_codec / history_log / rule_engine / config_loader / ota_package / discovery_proto
-│   │   │   └── third_party/cjson/     # 内置 MIT 官方 cJSON
+│   │   │   ├── include/ & src/        # data_bus / modbus_rtu / modbus_tcp / can_codec / calc_engine / cellular_proto / history_log / rule_engine / config_loader / ota_package / discovery_proto
+│   │   │   └── third_party/cjson/     # 内置 MIT 官方 cJSON（ESP-IDF 6.x 自动切换 espressif/cjson）
 │   │   └── edgehmi_bsp/               # 开箱即用 ESP32-S3 屏 BSP（Waveshare 4.3" / Sunton 8048S043 / 8048S070 + Kconfig）
 │   └── main/                          # ESP32-S3 驱动与任务集成
 │       ├── main.c                     # Core 1 控制/UI 调度、UART 热重配、NVS 保持、TWDT
 │       ├── ui_engine_lvgl.c           # LVGL 9 声明式 UI（14 种工业控件）、版本增量同步与 PIN 弹窗
 │       ├── local_io.c                 # ESP32-S3 原生 GPIO DI/DO + ADC1 + LEDC PWM 测点同步
-│       ├── fieldbus_ext.c             # Modbus TCP 客户端 + 原生 TWAI CAN 2.0B 接收解析
-│       ├── cloud_mqtt.c               # Core 0 MQTT 遥测、断网环形缓存补传、Wi-Fi/SoftAP/4G 钩子
+│       ├── fieldbus_ext.c             # Modbus TCP 客户端 + 原生 TWAI v2 CAN 2.0B 接收解析
+│       ├── cellular_modem.c           # 4G Cat.1/Cat.4 & 5G RedCap/NR PPPoS 驱动 + Wi-Fi/蜂窝主备切换
+│       ├── cloud_mqtt.c               # Core 0 MQTT 遥测、断网环形缓存补传、远程 Pull OTA 与 SoftAP 配网
 │       ├── ota_config.c               # HTTP 配置热更新、LittleFS 原子切换、历史 CSV & 告警 Ack API
 │       ├── ota_firmware.c             # Push/Pull 固件 OTA + SD/USB 离线 .epk 升级
 │       └── discovery_service.c        # mDNS (_edgehmi._tcp) + UDP 56888 广播应答
@@ -118,7 +119,7 @@ esp32-ind-hmi/
 │   ├── pack_epk.py                    # EPK1 (SHA-256 + CRC32) 离线/OTA 升级包构建与验签
 │   └── ota_push.py                    # 远程固件流式推送
 └── tests/
-    ├── test_core.c                    # 纯 C11 核心 9 组单元测试（含 Modbus TCP / CAN / History CSV）
+    ├── test_core.c                    # 纯 C11 核心 10 组单元测试（含 Modbus TCP / CAN / Calc / 4G/5G Failover / History CSV）
     └── test_studio_e2e.py             # Studio v2.0 + OTA + 发现 + 安全 + 历史 + 镜像全链路 E2E 测试
 ```
 
@@ -150,7 +151,7 @@ python studio/server.py 18765
 - **Run 模式**：点击启停按钮、输入 PIN (`1234`) 执行高危停泵、注入过流 / 高液位 / 光伏逆流 / RS485 断线故障。
 - **Design 模式**：拖拽任意控件排版、在右侧 **Inspector** 修改绑定测点与量程、一键增删控件并实时同步 `config.json`。
 
-### 3. 编译并烧录至 ESP32-S3 真机（ESP-IDF 5.x）
+### 3. 编译并烧录至 ESP32-S3 真机（ESP-IDF 6.1.1 / 兼容 5.3+）
 
 ```bash
 cd firmware
@@ -194,7 +195,7 @@ python tools/ota_push.py firmware/build/edgehmi_esp32s3.bin http://edgehmi-xxxx.
 ### 一键运行全量宿主机 C11 单测与 Studio E2E 测试
 
 ```bash
-# C11 核心库 8 组单元测试（严格零警告 -Wall -Wextra -Werror）
+# C11 核心库 10 组单元测试（严格零警告 -Wall -Wextra -Werror）
 cc -std=c11 -Wall -Wextra -Werror \
   -Ifirmware/components/edgehmi_core/include \
   -Ifirmware/components/edgehmi_core/third_party/cjson \
