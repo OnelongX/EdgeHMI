@@ -1,3 +1,4 @@
+#include "calc_engine.h"
 #include "can_codec.h"
 #include "config_loader.h"
 #include "data_bus.h"
@@ -498,10 +499,26 @@ static void test_modbus_tcp_and_can_and_history(void) {
     assert(edgehmi_history_export_alarms_json(hist, ajson, sizeof(ajson)) > 20);
     assert(strstr(ajson, "\"ack\":true") != NULL);
 
+    /* 4. Persistent history file save + reload across power cycle */
+    assert(edgehmi_history_save_file(hist, "tests/test_hist.bin") == EDGEHMI_OK);
+    edgehmi_history_t *hist2 = (edgehmi_history_t *)calloc(1, sizeof(edgehmi_history_t));
+    edgehmi_history_init(hist2, &sbus);
+    assert(edgehmi_history_load_file(hist2, "tests/test_hist.bin") == EDGEHMI_OK);
+    assert(hist2->count == 2 && hist2->alarm_count == 1 && hist2->alarms[0].acknowledged == true);
+    remove("tests/test_hist.bin");
+
+    /* 5. Derived calc_tags engine (mul: bms_pack_v * bms_pack_curr -> bms_power_w) */
+    assert(scfg->calc_tag_count == 1);
+    assert(edgehmi_calc_eval(scfg->calc_tags, scfg->calc_tag_count, &sbus, 3000) == 1);
+    double bpwr = 0.0;
+    assert(edgehmi_bus_get(&sbus, edgehmi_bus_find(&sbus, "bms_power_w"), &bpwr, NULL) == EDGEHMI_OK);
+    assert(fabs(bpwr - (53.12 * (-12.5))) < 1e-2);
+
+    free(hist2);
     free(hist);
     free(scfg);
     free(sraw);
-    printf("  [PASS] test_modbus_tcp_and_can_and_history (MBAP + CAN BMS + CSV + Alarm Ack)\n");
+    printf("  [PASS] test_modbus_tcp_and_can_and_history (MBAP + CAN BMS + CalcTags + Persistent CSV/Alarms)\n");
 }
 
 int main(void) {

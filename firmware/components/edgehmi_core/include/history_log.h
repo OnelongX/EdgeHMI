@@ -57,6 +57,10 @@ size_t edgehmi_history_export_csv(const edgehmi_history_t *hist, char *out_buf, 
 /* Export alarm audit list as JSON array into caller buffer */
 size_t edgehmi_history_export_alarms_json(const edgehmi_history_t *hist, char *out_buf, size_t out_cap);
 
+/* Persist / restore history & alarm audit buffer to LittleFS/SD file across power cycles */
+edgehmi_err_t edgehmi_history_save_file(const edgehmi_history_t *hist, const char *path);
+edgehmi_err_t edgehmi_history_load_file(edgehmi_history_t *hist, const char *path);
+
 #ifdef __cplusplus
 }
 #endif

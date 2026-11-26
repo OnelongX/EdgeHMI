@@ -141,6 +141,8 @@ def main() -> int:
             time.sleep(1.0)
             _, st_clamped = req_json("GET", "/api/state")
             assert st_clamped["tags"]["power_limit"]["value"] == 60.0
+            # Verify derived calc_tag bms_power_w = bms_pack_v * bms_pack_curr (~750W)
+            assert st_clamped["tags"]["bms_power_w"]["value"] > 600.0, f"calc_tag failed: {st_clamped['tags'].get('bms_power_w')}"
 
             # 6. Firmware OTA via .epk package (auth + SHA-256 tamper detection + success)
             fw_bin = b"EDGEHMI-ESP32S3-FW-IMAGE-V1.2.5" * 16

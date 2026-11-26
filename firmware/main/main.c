@@ -1,3 +1,4 @@
+#include "calc_engine.h"
 #include "cloud_mqtt.h"
 #include "config_loader.h"
 #include "data_bus.h"
@@ -234,14 +235,20 @@ static void control_task(void *arg) {
         edgehmi_can_poll_rx(&s_active_cfg, &s_bus, ts);
         edgehmi_local_io_sync(&s_active_cfg, &s_bus, ts);
 
-        /* 3. Mark stale tags, evaluate deterministic interlock rules & record periodic history */
+        /* 3. Evaluate derived virtual calc_tags, stale check, interlock rules & persistent history */
+        edgehmi_calc_eval(s_active_cfg.calc_tags, s_active_cfg.calc_tag_count, &s_bus, ts);
         edgehmi_bus_check_stale(&s_bus, ts, interval_ms * 10ULL);
         edgehmi_rules_eval(&s_rules, &s_bus, ts);
 
         static uint64_t s_last_hist_ms = 0;
+        static uint64_t s_last_flush_ms = 0;
         if (ts - s_last_hist_ms >= 5000ULL) {
             edgehmi_history_record_sample(&s_history, &s_bus, ts);
             s_last_hist_ms = ts;
+        }
+        if (ts - s_last_flush_ms >= 60000ULL) {
+            edgehmi_history_save_file(&s_history, "/cfg/history.bin");
+            s_last_flush_ms = ts;
         }
         xSemaphoreGive(s_cfg_mutex);
 
@@ -331,12 +338,19 @@ static edgehmi_err_t reload_config_atomic(const char *json_buf, char *err_buf, s
         edgehmi_bus_register(&s_bus, sig->tag_name, TAG_TYPE_F32, TAG_ACCESS_R,
                              sig->unit, sig->default_val, &sig->tag_idx);
     }
+    for (size_t i = 0; i < s_active_cfg.calc_tag_count; ++i) {
+        edgehmi_calc_tag_t *ct = &s_active_cfg.calc_tags[i];
+        edgehmi_bus_register(&s_bus, ct->tag_name, TAG_TYPE_F32, TAG_ACCESS_R,
+                             ct->unit, 0.0, &ct->tag_idx);
+    }
+    edgehmi_calc_bind(s_active_cfg.calc_tags, s_active_cfg.calc_tag_count, &s_bus);
 
     s_mb_block_count = edgehmi_mb_plan_blocks(
         s_active_cfg.points, s_active_cfg.point_count,
         s_mb_blocks, EDGEHMI_MAX_MODBUS_BLOCKS, 4, 32);
     edgehmi_rules_init(&s_rules, s_active_cfg.rules, s_active_cfg.rule_count, on_alarm_event, NULL);
     edgehmi_history_init(&s_history, &s_bus);
+    edgehmi_history_load_file(&s_history, "/cfg/history.bin");
 
     /* Ensure RS485 UART, Local IO, CAN (TWAI) & Modbus TCP are initialized / reconfigured */
     rs485_configure(&s_active_cfg);
@@ -356,6 +370,8 @@ static edgehmi_err_t reload_config_atomic(const char *json_buf, char *err_buf, s
     /* Defer LVGL screen rebuild to Core 1 ui_task to guarantee single-threaded LVGL safety */
     s_ui_reload_pending = true;
     xSemaphoreGive(s_cfg_mutex);
+
+    edgehmi_cloud_mqtt_reconfigure();
 
     free(candidate);
     free(cand_bus);

@@ -27,6 +27,7 @@ VALID_WIDGETS = {
     "slider", "spinbox", "alarm_list", "qrcode", "image",
 }
 VALID_IO_MODES = {"di", "do", "adc", "pwm"}
+VALID_CALC_OPS = {"add", "sub", "mul", "div", "avg", "integrate"}
 
 
 def plan_modbus_blocks(
@@ -201,6 +202,26 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
                 errors.append(f"can_bus.signals[{idx}] ({tag}): bit_len must be 1..32")
             if not (isinstance(sb, int) and 0 <= sb <= 63):
                 errors.append(f"can_bus.signals[{idx}] ({tag}): start_bit must be 0..63")
+            tags[tag] = {"tag": tag, "rw": "r", "retentive": False}
+
+    calc_tags = cfg.get("calc_tags", [])
+    if isinstance(calc_tags, list):
+        for idx, ct in enumerate(calc_tags):
+            tag = ct.get("tag", "")
+            op = ct.get("op")
+            sa = ct.get("src_a")
+            sb = ct.get("src_b")
+            if not isinstance(tag, str) or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]{0,31}$", tag):
+                errors.append(f"calc_tags[{idx}]: invalid tag name '{tag}'")
+                continue
+            if tag in tags:
+                errors.append(f"calc_tags[{idx}]: duplicate tag '{tag}'")
+            if op not in VALID_CALC_OPS:
+                errors.append(f"calc_tags[{idx}] ({tag}): invalid op '{op}'")
+            if sa not in tags:
+                errors.append(f"calc_tags[{idx}] ({tag}): unknown src_a '{sa}'")
+            if op != "integrate" and sb not in tags:
+                errors.append(f"calc_tags[{idx}] ({tag}): unknown src_b '{sb}'")
             tags[tag] = {"tag": tag, "rw": "r", "retentive": False}
 
     if len(tags) > MAX_TAGS:

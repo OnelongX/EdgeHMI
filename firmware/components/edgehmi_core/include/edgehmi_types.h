@@ -15,6 +15,7 @@ extern "C" {
 #define EDGEHMI_MAX_MODBUS_BLOCKS   32
 #define EDGEHMI_MAX_LOCAL_IO        24
 #define EDGEHMI_MAX_CAN_SIGNALS     32
+#define EDGEHMI_MAX_CALC_TAGS       24
 #define EDGEHMI_MAX_RULES           64
 #define EDGEHMI_MAX_RULE_CONDS      4
 #define EDGEHMI_MAX_PAGES           8
@@ -147,6 +148,30 @@ typedef struct {
     double threshold;
     double hysteresis;
 } edgehmi_rule_cond_t;
+
+typedef enum {
+    CALC_OP_ADD = 0,
+    CALC_OP_SUB,
+    CALC_OP_MUL,
+    CALC_OP_DIV,
+    CALC_OP_AVG,
+    CALC_OP_INTEGRATE /* Accumulator: val += src_a * dt_hours * scale */
+} edgehmi_calc_op_t;
+
+typedef struct {
+    char tag_name[EDGEHMI_MAX_NAME_LEN];
+    int16_t tag_idx;
+    edgehmi_calc_op_t op;
+    char src_a[EDGEHMI_MAX_NAME_LEN];
+    int16_t src_a_idx;
+    char src_b[EDGEHMI_MAX_NAME_LEN];
+    int16_t src_b_idx;
+    double scale;
+    double offset;
+    char unit[EDGEHMI_MAX_UNIT_LEN];
+    double accum;
+    uint64_t last_ms;
+} edgehmi_calc_tag_t;
 
 typedef struct {
     char id[EDGEHMI_MAX_NAME_LEN];
@@ -323,6 +348,10 @@ typedef struct {
     edgehmi_local_io_t local_io[EDGEHMI_MAX_LOCAL_IO];
     size_t local_io_count;
     edgehmi_can_cfg_t can_bus;
+
+    /* Derived virtual calculation tags (power = V*I, deltaT, energy integration) */
+    edgehmi_calc_tag_t calc_tags[EDGEHMI_MAX_CALC_TAGS];
+    size_t calc_tag_count;
 
     /* Network & Cloud MQTT telemetry */
     edgehmi_net_cfg_t net;

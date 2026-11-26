@@ -1,0 +1,77 @@
+name: EdgeHMI CI (C11 Core + Studio E2E + ESP32-S3 Firmware)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  host-tests:
+    name: Host C11 Core, Validator & Studio E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python & Node
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile & Run Pure C11 Core Unit Tests (-Wall -Wextra -Werror)
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror -O2 \
+            -Ifirmware/components/edgehmi_core/include \
+            -Ifirmware/components/edgehmi_core/third_party/cjson \
+            firmware/components/edgehmi_core/src/*.c \
+            firmware/components/edgehmi_core/third_party/cjson/cJSON.c \
+            tests/test_core.c -lm -o tests/test_core
+          ./tests/test_core
+
+      - name: Validate Industrial Config Templates & Font Subsetter
+        run: |
+          python3 tools/validate_config.py configs/pump_station.json configs/solar_inverter.json
+          python3 tools/build_font.py configs/pump_station.json configs/solar_inverter.json
+
+      - name: Run Studio v2.0 Full E2E + Security + Historian Suite
+        run: python3 tests/test_studio_e2e.py
+
+      - name: Verify Studio Frontend JavaScript Syntax
+        run: |
+          node -e "const fs=require('fs'); const h=fs.readFileSync('studio/web/index.html','utf8'); const m=h.match(/<script>([\s\S]*?)<\/script>/); new Function(m[1]); console.log('JS_SYNTAX_OK');"
+
+  esp32s3-firmware:
+    name: ESP-IDF 5.3 ESP32-S3 Build (${{ matrix.board_name }})
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.3.1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board_name: waveshare_43
+            kconfig: CONFIG_EDGEHMI_BOARD_WAVESHARE_43=y
+          - board_name: sunton_8048s043
+            kconfig: CONFIG_EDGEHMI_BOARD_SUNTON_8048S043=y
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & Build ESP32-S3 Firmware
+        run: |
+          cd firmware
+          echo "${{ matrix.kconfig }}" > sdkconfig.ci.board
+          idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.board" set-target esp32s3
+          idf.py build
+
+      - name: Pack Verified EPK1 Firmware Package
+        run: |
+          mkdir -p dist
+          cp firmware/build/edgehmi_esp32s3.bin dist/edgehmi_${{ matrix.board_name }}.bin
+          python3 tools/pack_epk.py firmware 2.1.0 dist/edgehmi_${{ matrix.board_name }}.bin dist/edgehmi_${{ matrix.board_name }}.epk
+          python3 tools/pack_epk.py --verify dist/edgehmi_${{ matrix.board_name }}.epk
+
+      - name: Upload Prebuilt Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: edgehmi-esp32s3-${{ matrix.board_name }}
+          path: dist/

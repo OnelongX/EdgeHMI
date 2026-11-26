@@ -209,6 +209,20 @@ class IndustrialRuntime:
                 }
                 self.history[tname] = deque([val] * 24, maxlen=24)
 
+            for ct in cfg.get("calc_tags", []):
+                tname = ct["tag"]
+                self.tags[tname] = {
+                    "name": tname,
+                    "source": f"calc:{ct.get('op', 'add')}",
+                    "value": 0.0,
+                    "unit": ct.get("unit", ""),
+                    "rw": "r",
+                    "retentive": False,
+                    "quality": 1,
+                    "updated_ms": now_ms,
+                }
+                self.history[tname] = deque([0.0] * 24, maxlen=24)
+
             for r in cfg.get("rules", []):
                 self.rule_state[r["id"]] = {
                     "active": False,
@@ -433,6 +447,37 @@ class IndustrialRuntime:
                 self.tags["bms_pack_v"]["value"] = round(52.8 + 0.15 * math.sin(now / 5.0), 2)
             if "bms_pack_curr" in self.tags:
                 self.tags["bms_pack_curr"]["value"] = round(14.2 + random.uniform(-0.3, 0.3), 2)
+
+            # Evaluate derived virtual calc_tags
+            for ct in self.config.get("calc_tags", []):
+                tn = ct["tag"]
+                op = ct.get("op")
+                sa = self.tags.get(ct.get("src_a", ""))
+                sb = self.tags.get(ct.get("src_b", ""))
+                if tn not in self.tags or not sa:
+                    continue
+                scale = float(ct.get("scale", 1.0)) or 1.0
+                off = float(ct.get("offset", 0.0))
+                va = float(sa["value"])
+                vb = float(sb["value"]) if sb else 0.0
+                if op == "add":
+                    res = (va + vb) * scale + off
+                elif op == "sub":
+                    res = (va - vb) * scale + off
+                elif op == "mul":
+                    res = (va * vb) * scale + off
+                elif op == "div":
+                    if abs(vb) < 1e-9:
+                        continue
+                    res = (va / vb) * scale + off
+                elif op == "avg":
+                    res = ((va + vb) * 0.5) * scale + off
+                elif op == "integrate":
+                    res = self.tags[tn]["value"] + va * (0.25 / 3600.0) * scale
+                else:
+                    continue
+                self.tags[tn]["value"] = round(res, 2)
+                self.history[tn][-1] = self.tags[tn]["value"]
 
             if now - self.last_csv_ts >= 1.0:
                 row: dict[str, Any] = {"ts_ms": now_ms}

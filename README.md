@@ -4,6 +4,7 @@
 
 <br/>
 
+[![CI](https://github.com/OnelongX/EdgeHMI/actions/workflows/ci.yml/badge.svg)](https://github.com/OnelongX/EdgeHMI/actions/workflows/ci.yml)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.x-E7352C?style=for-the-badge&logo=espressif&logoColor=white)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
 [![LVGL](https://img.shields.io/badge/LVGL-9.x-0EA5E9?style=for-the-badge)](https://lvgl.io/)
 [![Core](https://img.shields.io/badge/Core-Pure%20C11%20Zero--GC-14B8A6?style=for-the-badge)](firmware/components/edgehmi_core)
@@ -58,6 +59,13 @@
 
 <p align="center">
   <img src="docs/images/studio_solar_run.png" alt="EdgeHMI Studio — Solar PV and BESS Edge Controller" width="96%" />
+</p>
+
+### 4. Studio v2.1 六标签全栈工控 IDE（步进设定 + 屏内告警表 + 运维二维码 + 可视化点表）
+> 右侧 6 标签工作台支持可视化增删 Modbus / GPIO / CAN 点位、安全联锁规则、真机实时镜像（Live Mirror）、WebSerial 串口监控与一键导出 `history.csv`；真机同时内置 `http://192.168.4.1/setup` SoftAP 配网页、历史掉电持久化与 `calc_tags` 虚拟计算测点。
+
+<p align="center">
+  <img src="docs/images/studio_v2_ide.png" alt="EdgeHMI Studio v2.1 — Diagnostics Spinbox, Alarm List, QRCode & Visual Tag Editor" width="96%" />
 </p>
 
 ---

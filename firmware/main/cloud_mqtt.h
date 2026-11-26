@@ -19,6 +19,12 @@ edgehmi_err_t edgehmi_cloud_mqtt_start(const edgehmi_config_t *active_cfg,
                                        edgehmi_bus_t *bus,
                                        SemaphoreHandle_t cfg_mutex);
 
+/* Reconnect MQTT client after config hot-reload changes broker URI/credentials */
+void edgehmi_cloud_mqtt_reconfigure(void);
+
+/* Persist Wi-Fi STA credentials to NVS and trigger immediate reconnect */
+edgehmi_err_t edgehmi_net_save_wifi(const char *ssid, const char *password);
+
 /* Push an immediate alarm event to cloud MQTT (or queue into offline ring-buffer) */
 void edgehmi_cloud_mqtt_publish_alarm(const edgehmi_alarm_event_t *evt);
 

@@ -115,6 +115,23 @@
         }
       }
     },
+    "calc_tags": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "required": ["tag", "op", "src_a"],
+        "properties": {
+          "tag": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]{0,31}$" },
+          "op": { "type": "string", "enum": ["add", "sub", "mul", "div", "avg", "integrate"] },
+          "src_a": { "type": "string" },
+          "src_b": { "type": "string" },
+          "scale": { "type": "number" },
+          "offset": { "type": "number" },
+          "unit": { "type": "string", "maxLength": 16 }
+        }
+      }
+    },
     "cloud": {
       "type": "object",
       "properties": {

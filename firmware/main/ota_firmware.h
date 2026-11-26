@@ -25,6 +25,9 @@ void edgehmi_ota_mark_app_valid(void);
 edgehmi_err_t edgehmi_ota_apply_offline_epk(const char *epk_path,
                                             edgehmi_reload_cb reload_cb);
 
+/* Trigger an asynchronous remote HTTPS Pull OTA (used by MQTT cmd/ota_pull) */
+edgehmi_err_t edgehmi_ota_trigger_pull(const char *url);
+
 #ifdef __cplusplus
 }
 #endif

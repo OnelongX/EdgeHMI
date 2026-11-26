@@ -38,6 +38,9 @@
       { "tag": "bms_pack_curr", "can_id": 854, "start_bit": 16, "bit_len": 16, "signed": true,  "scale": 0.1,  "offset": 0, "unit": "A", "default": 14.2 }
     ]
   },
+  "calc_tags": [
+    { "tag": "bms_power_w", "op": "mul", "src_a": "bms_pack_v", "src_b": "bms_pack_curr", "scale": 1.0, "unit": "W" }
+  ],
   "rules": [
     {
       "id": "rule_anti_backflow",

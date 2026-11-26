@@ -134,3 +134,65 @@ size_t edgehmi_history_export_alarms_json(const edgehmi_history_t *hist, char *o
     pos += (size_t)snprintf(out_buf + pos, out_cap - pos, "]}");
     return pos;
 }
+
+#define EDGEHMI_HIST_MAGIC 0x45484831u /* "EHH1" */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t struct_size;
+    uint32_t tag_count;
+} hist_file_hdr_t;
+
+edgehmi_err_t edgehmi_history_save_file(const edgehmi_history_t *hist, const char *path) {
+    if (!hist || !path) {
+        return EDGEHMI_ERR_INVALID_ARG;
+    }
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        return EDGEHMI_ERR_IO;
+    }
+    hist_file_hdr_t hdr = {
+        .magic = EDGEHMI_HIST_MAGIC,
+        .struct_size = (uint32_t)sizeof(*hist),
+        .tag_count = (uint32_t)hist->tag_count,
+    };
+    bool ok = (fwrite(&hdr, sizeof(hdr), 1, f) == 1) &&
+              (fwrite(hist, sizeof(*hist), 1, f) == 1);
+    fclose(f);
+    return ok ? EDGEHMI_OK : EDGEHMI_ERR_IO;
+}
+
+edgehmi_err_t edgehmi_history_load_file(edgehmi_history_t *hist, const char *path) {
+    if (!hist || !path) {
+        return EDGEHMI_ERR_INVALID_ARG;
+    }
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return EDGEHMI_ERR_NOT_FOUND;
+    }
+    hist_file_hdr_t hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1 ||
+        hdr.magic != EDGEHMI_HIST_MAGIC ||
+        hdr.struct_size != (uint32_t)sizeof(*hist)) {
+        fclose(f);
+        return EDGEHMI_ERR_PARSE;
+    }
+    edgehmi_history_t tmp;
+    if (fread(&tmp, sizeof(tmp), 1, f) != 1) {
+        fclose(f);
+        return EDGEHMI_ERR_IO;
+    }
+    fclose(f);
+    /* Restore samples and alarms only if tag layout matches active bus */
+    if (tmp.tag_count == hist->tag_count &&
+        memcmp(tmp.tag_names, hist->tag_names, sizeof(tmp.tag_names)) == 0) {
+        memcpy(hist->samples, tmp.samples, sizeof(hist->samples));
+        hist->head = tmp.head % EDGEHMI_MAX_HISTORY_SAMPLES;
+        hist->count = tmp.count <= EDGEHMI_MAX_HISTORY_SAMPLES ? tmp.count : EDGEHMI_MAX_HISTORY_SAMPLES;
+    }
+    memcpy(hist->alarms, tmp.alarms, sizeof(hist->alarms));
+    hist->alarm_head = tmp.alarm_head % EDGEHMI_MAX_ALARMS;
+    hist->alarm_count = tmp.alarm_count <= EDGEHMI_MAX_ALARMS ? tmp.alarm_count : EDGEHMI_MAX_ALARMS;
+    hist->next_alarm_id = tmp.next_alarm_id > 0 ? tmp.next_alarm_id : 1;
+    return EDGEHMI_OK;
+}

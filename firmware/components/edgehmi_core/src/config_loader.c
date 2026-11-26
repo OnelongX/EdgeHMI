@@ -454,6 +454,76 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
         }
     }
 
+    /* optional: calc_tags (derived virtual tags: add/sub/mul/div/avg/integrate) */
+    const cJSON *jcalcs = cJSON_GetObjectItemCaseSensitive(root, "calc_tags");
+    if (cJSON_IsArray(jcalcs)) {
+        const cJSON *jc = NULL;
+        cJSON_ArrayForEach(jc, jcalcs) {
+            if (out_cfg->calc_tag_count >= EDGEHMI_MAX_CALC_TAGS) {
+                set_err(err_buf, err_buf_len, "exceeded max calc_tags");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_FULL;
+            }
+            const cJSON *jtag = cJSON_GetObjectItemCaseSensitive(jc, "tag");
+            const cJSON *jop  = cJSON_GetObjectItemCaseSensitive(jc, "op");
+            const cJSON *jsa  = cJSON_GetObjectItemCaseSensitive(jc, "src_a");
+            if (!cJSON_IsString(jtag) || !cJSON_IsString(jop) || !cJSON_IsString(jsa)) {
+                set_err(err_buf, err_buf_len, "calc_tag requires tag, op, src_a");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            edgehmi_calc_tag_t *ct = &out_cfg->calc_tags[out_cfg->calc_tag_count];
+            memset(ct, 0, sizeof(*ct));
+            ct->tag_idx = -1;
+            ct->src_a_idx = -1;
+            ct->src_b_idx = -1;
+            copy_str(ct->tag_name, sizeof(ct->tag_name), jtag->valuestring);
+            copy_str(ct->src_a, sizeof(ct->src_a), jsa->valuestring);
+            if (strcmp(jop->valuestring, "add") == 0)            ct->op = CALC_OP_ADD;
+            else if (strcmp(jop->valuestring, "sub") == 0)       ct->op = CALC_OP_SUB;
+            else if (strcmp(jop->valuestring, "mul") == 0)       ct->op = CALC_OP_MUL;
+            else if (strcmp(jop->valuestring, "div") == 0)       ct->op = CALC_OP_DIV;
+            else if (strcmp(jop->valuestring, "avg") == 0)       ct->op = CALC_OP_AVG;
+            else if (strcmp(jop->valuestring, "integrate") == 0) ct->op = CALC_OP_INTEGRATE;
+            else {
+                set_err(err_buf, err_buf_len, "unknown calc_tag op");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            const cJSON *jsb = cJSON_GetObjectItemCaseSensitive(jc, "src_b");
+            if (cJSON_IsString(jsb)) copy_str(ct->src_b, sizeof(ct->src_b), jsb->valuestring);
+            const cJSON *jsc = cJSON_GetObjectItemCaseSensitive(jc, "scale");
+            ct->scale = cJSON_IsNumber(jsc) ? jsc->valuedouble : 1.0;
+            const cJSON *jof = cJSON_GetObjectItemCaseSensitive(jc, "offset");
+            ct->offset = cJSON_IsNumber(jof) ? jof->valuedouble : 0.0;
+            const cJSON *jun = cJSON_GetObjectItemCaseSensitive(jc, "unit");
+            if (cJSON_IsString(jun)) copy_str(ct->unit, sizeof(ct->unit), jun->valuestring);
+
+            ct->src_a_idx = edgehmi_bus_find(bus, ct->src_a);
+            if (ct->src_a_idx < 0) {
+                set_err(err_buf, err_buf_len, "calc_tag src_a unknown");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_NOT_FOUND;
+            }
+            if (ct->op != CALC_OP_INTEGRATE) {
+                ct->src_b_idx = edgehmi_bus_find(bus, ct->src_b);
+                if (ct->src_b_idx < 0) {
+                    set_err(err_buf, err_buf_len, "calc_tag src_b unknown");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_NOT_FOUND;
+                }
+            }
+            edgehmi_err_t rc = edgehmi_bus_register(
+                bus, ct->tag_name, TAG_TYPE_F32, TAG_ACCESS_R, ct->unit, 0.0, &ct->tag_idx);
+            if (rc != EDGEHMI_OK) {
+                set_err(err_buf, err_buf_len, "failed to register calc_tag");
+                cJSON_Delete(root);
+                return rc;
+            }
+            out_cfg->calc_tag_count++;
+        }
+    }
+
     /* optional: cloud (Core 0 MQTT telemetry & remote command) */
     out_cfg->cloud.publish_interval_ms = 5000;
     copy_str(out_cfg->cloud.topic_prefix, sizeof(out_cfg->cloud.topic_prefix), "edgehmi");

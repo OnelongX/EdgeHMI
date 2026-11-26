@@ -1,6 +1,8 @@
 #include "ota_config.h"
+#include "cloud_mqtt.h"
 #include "ota_firmware.h"
 
+#include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_littlefs.h"
@@ -303,6 +305,46 @@ static esp_err_t handle_ack_alarms(httpd_req_t *req) {
     return httpd_resp_sendstr(req, resp);
 }
 
+static const char *s_setup_html =
+    "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>EdgeHMI Wi-Fi Setup</title><style>body{font-family:sans-serif;background:#0b1220;color:#e2e8f0;padding:24px;max-width:420px;margin:auto}"
+    "input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#fff;font-size:15px}"
+    "button{background:#0284c7;border:none;font-weight:700;cursor:pointer}</style></head><body>"
+    "<h2>EdgeHMI 现场配网 (Wi-Fi Setup)</h2><p>输入厂区 Wi-Fi 名称与密码，保存至 NVS 并自动接入局域网。</p>"
+    "<input id=s placeholder='Wi-Fi SSID'><input id=p type=password placeholder='Wi-Fi Password'>"
+    "<button onclick=\"fetch('/api/wifi/setup',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({ssid:s.value,password:p.value})}).then(r=>r.json()).then(d=>m.textContent=d.ok?'已保存，正在连接 Wi-Fi...':d.error)\">保存并连接</button>"
+    "<p id=m></p></body></html>";
+
+static esp_err_t handle_setup_page(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_sendstr(req, s_setup_html);
+}
+
+static esp_err_t handle_wifi_setup(httpd_req_t *req) {
+    char body[256] = {0};
+    if (req->content_len <= 0 || req->content_len >= (int)sizeof(body)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
+    }
+    int r = httpd_req_recv(req, body, req->content_len);
+    if (r <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
+    body[r] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    const cJSON *jssid = root ? cJSON_GetObjectItemCaseSensitive(root, "ssid") : NULL;
+    const cJSON *jpass = root ? cJSON_GetObjectItemCaseSensitive(root, "password") : NULL;
+    if (!cJSON_IsString(jssid) || jssid->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"missing ssid\"}");
+    }
+    edgehmi_net_save_wifi(jssid->valuestring, cJSON_IsString(jpass) ? jpass->valuestring : "");
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true,\"status\":\"connecting\"}");
+}
+
 edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
                                  const edgehmi_config_t *active_cfg,
                                  const edgehmi_mb_stats_t *mb_stats,
@@ -318,7 +360,7 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0; /* Pin HTTP/OTA management server to Core 0 */
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 14;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
         return EDGEHMI_ERR_IO;
@@ -330,6 +372,8 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_uri_t u_hist   = { .uri = "/api/history.csv", .method = HTTP_GET,  .handler = handle_history_csv };
     httpd_uri_t u_alarms = { .uri = "/api/alarms",      .method = HTTP_GET,  .handler = handle_get_alarms };
     httpd_uri_t u_ack    = { .uri = "/api/alarms/ack",  .method = HTTP_POST, .handler = handle_ack_alarms };
+    httpd_uri_t u_setup  = { .uri = "/setup",           .method = HTTP_GET,  .handler = handle_setup_page };
+    httpd_uri_t u_wifi   = { .uri = "/api/wifi/setup",  .method = HTTP_POST, .handler = handle_wifi_setup };
 
     httpd_register_uri_handler(server, &u_health);
     httpd_register_uri_handler(server, &u_tags);
@@ -337,8 +381,10 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_register_uri_handler(server, &u_hist);
     httpd_register_uri_handler(server, &u_alarms);
     httpd_register_uri_handler(server, &u_ack);
+    httpd_register_uri_handler(server, &u_setup);
+    httpd_register_uri_handler(server, &u_wifi);
     edgehmi_ota_register_handlers(server, active_cfg, cfg_mutex);
 
-    ESP_LOGI(TAG, "Config + Firmware OTA + Historian HTTP server started on Core 0 (port %d)", config.server_port);
+    ESP_LOGI(TAG, "Config + Firmware OTA + Historian + /setup Portal started on Core 0 (port %d)", config.server_port);
     return EDGEHMI_OK;
 }

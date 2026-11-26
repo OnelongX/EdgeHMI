@@ -264,3 +264,37 @@ edgehmi_err_t edgehmi_ota_apply_offline_epk(const char *epk_path,
     free(buf);
     return rc;
 }
+
+static void async_pull_ota_task(void *arg) {
+    char *url = (char *)arg;
+    if (url && url[0]) {
+        ESP_LOGI(TAG, "Starting remote MQTT Pull OTA from %s", url);
+        esp_http_client_config_t hcfg = { .url = url, .timeout_ms = 20000 };
+        esp_https_ota_config_t ota_cfg = { .http_config = &hcfg };
+        if (esp_https_ota(&ota_cfg) == ESP_OK) {
+            ESP_LOGI(TAG, "Remote Pull OTA succeeded, rebooting...");
+            free(url);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+        } else {
+            ESP_LOGE(TAG, "Remote Pull OTA failed for %s", url);
+        }
+    }
+    free(url);
+    vTaskDelete(NULL);
+}
+
+edgehmi_err_t edgehmi_ota_trigger_pull(const char *url) {
+    if (!url || strncmp(url, "http", 4) != 0) {
+        return EDGEHMI_ERR_INVALID_ARG;
+    }
+    size_t len = strlen(url);
+    char *copy = (char *)malloc(len + 1);
+    if (!copy) return EDGEHMI_ERR_IO;
+    memcpy(copy, url, len + 1);
+    if (xTaskCreatePinnedToCore(async_pull_ota_task, "mqtt_ota", 8192, copy, 4, NULL, 0) != pdPASS) {
+        free(copy);
+        return EDGEHMI_ERR_IO;
+    }
+    return EDGEHMI_OK;
+}
