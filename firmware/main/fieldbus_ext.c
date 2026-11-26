@@ -5,6 +5,8 @@
 #include "esp_attr.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "modbus_rtu.h"
@@ -280,4 +282,106 @@ void edgehmi_mbtcp_scan_blocks(const edgehmi_config_t *cfg,
             if (stats) stats->rx_ok++;
         }
     }
+}
+
+/* Core 0 Northbound Modbus TCP Server Gateway — exposes unified data_bus to SCADA / PLC */
+static const edgehmi_config_t *s_gw_cfg = NULL;
+static edgehmi_bus_t *s_gw_bus = NULL;
+static SemaphoreHandle_t s_gw_mutex = NULL;
+
+static void mbtcp_server_task(void *arg) {
+    (void)arg;
+    int listen_fd = -1;
+    uint16_t bound_port = 0;
+    uint8_t rx_buf[260];
+    uint8_t tx_buf[260];
+
+    for (;;) {
+        bool enabled = false;
+        uint16_t port = 502;
+        if (s_gw_mutex) xSemaphoreTake(s_gw_mutex, portMAX_DELAY);
+        if (s_gw_cfg) {
+            enabled = s_gw_cfg->modbus_tcp.server_enabled;
+            port = s_gw_cfg->modbus_tcp.server_port ? s_gw_cfg->modbus_tcp.server_port : 502;
+        }
+        if (s_gw_mutex) xSemaphoreGive(s_gw_mutex);
+
+        if (!enabled) {
+            if (listen_fd >= 0) {
+                close(listen_fd);
+                listen_fd = -1;
+                bound_port = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        if (listen_fd >= 0 && bound_port != port) {
+            close(listen_fd);
+            listen_fd = -1;
+        }
+        if (listen_fd < 0) {
+            listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+            if (listen_fd < 0) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+            int opt = 1;
+            setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+            struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
+            setsockopt(listen_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+            struct sockaddr_in saddr;
+            memset(&saddr, 0, sizeof(saddr));
+            saddr.sin_family = AF_INET;
+            saddr.sin_port = htons(port);
+            saddr.sin_addr.s_addr = htonl(INADDR_ANY);
+            if (bind(listen_fd, (struct sockaddr *)&saddr, sizeof(saddr)) != 0 ||
+                listen(listen_fd, 2) != 0) {
+                close(listen_fd);
+                listen_fd = -1;
+                vTaskDelay(pdMS_TO_TICKS(3000));
+                continue;
+            }
+            bound_port = port;
+            ESP_LOGI(TAG, "Modbus TCP Server Gateway listening on port %u", (unsigned)port);
+        }
+
+        struct sockaddr_in caddr;
+        socklen_t clen = sizeof(caddr);
+        int cli = accept(listen_fd, (struct sockaddr *)&caddr, &clen);
+        if (cli < 0) {
+            continue;
+        }
+        struct timeval ctv = { .tv_sec = 5, .tv_usec = 0 };
+        setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, &ctv, sizeof(ctv));
+
+        for (;;) {
+            int n = recv(cli, rx_buf, sizeof(rx_buf), 0);
+            if (n <= 0) {
+                break;
+            }
+            size_t rlen = 0;
+            uint64_t ts = (uint64_t)(esp_timer_get_time() / 1000LL);
+            if (s_gw_mutex) xSemaphoreTake(s_gw_mutex, portMAX_DELAY);
+            if (s_gw_bus) {
+                rlen = edgehmi_mbtcp_handle_server_req(rx_buf, (size_t)n, s_gw_bus, ts, tx_buf, sizeof(tx_buf));
+            }
+            if (s_gw_mutex) xSemaphoreGive(s_gw_mutex);
+            if (rlen > 0 && send(cli, tx_buf, rlen, 0) < 0) {
+                break;
+            }
+        }
+        close(cli);
+    }
+}
+
+edgehmi_err_t edgehmi_mbtcp_server_start(const edgehmi_config_t *active_cfg,
+                                         edgehmi_bus_t *bus,
+                                         SemaphoreHandle_t cfg_mutex) {
+    s_gw_cfg = active_cfg;
+    s_gw_bus = bus;
+    s_gw_mutex = cfg_mutex;
+    xTaskCreatePinnedToCore(mbtcp_server_task, "edgehmi_mbgw", 4096, NULL, 3, NULL, 0);
+    return EDGEHMI_OK;
 }

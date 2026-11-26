@@ -9,6 +9,7 @@ void edgehmi_history_init(edgehmi_history_t *hist, const edgehmi_bus_t *bus) {
     }
     memset(hist, 0, sizeof(*hist));
     hist->next_alarm_id = 1;
+    hist->next_audit_id = 1;
     if (!bus) {
         return;
     }
@@ -135,7 +136,76 @@ size_t edgehmi_history_export_alarms_json(const edgehmi_history_t *hist, char *o
     return pos;
 }
 
-#define EDGEHMI_HIST_MAGIC 0x45484831u /* "EHH1" */
+static const char *audit_src_str(edgehmi_audit_src_t src) {
+    switch (src) {
+        case AUDIT_SRC_UI:        return "ui";
+        case AUDIT_SRC_HTTP:      return "http";
+        case AUDIT_SRC_MQTT:      return "mqtt";
+        case AUDIT_SRC_MODBUS_GW: return "modbus_gw";
+        case AUDIT_SRC_RECIPE:    return "recipe";
+        case AUDIT_SRC_SCHEDULE:  return "schedule";
+        case AUDIT_SRC_RULE:      return "rule";
+        default:                  return "unknown";
+    }
+}
+
+uint32_t edgehmi_history_record_audit(edgehmi_history_t *hist,
+                                      edgehmi_audit_src_t source,
+                                      const char *actor,
+                                      const char *tag_name,
+                                      double old_val,
+                                      double new_val,
+                                      uint64_t now_ms) {
+    if (!hist || !tag_name) {
+        return 0;
+    }
+    edgehmi_audit_record_t *rec = &hist->audits[hist->audit_head];
+    memset(rec, 0, sizeof(*rec));
+    rec->id = hist->next_audit_id++;
+    rec->timestamp_ms = now_ms;
+    rec->source = source;
+    edgehmi_copy_str(rec->actor, sizeof(rec->actor), actor ? actor : "operator");
+    edgehmi_copy_str(rec->tag_name, sizeof(rec->tag_name), tag_name);
+    rec->old_val = (float)old_val;
+    rec->new_val = (float)new_val;
+
+    hist->audit_head = (hist->audit_head + 1u) % EDGEHMI_MAX_AUDIT_LOGS;
+    if (hist->audit_count < EDGEHMI_MAX_AUDIT_LOGS) {
+        hist->audit_count++;
+    }
+    return rec->id;
+}
+
+size_t edgehmi_history_export_audit_json(const edgehmi_history_t *hist, char *out_buf, size_t out_cap) {
+    if (!hist || !out_buf || out_cap < 32) {
+        return 0;
+    }
+    size_t pos = (size_t)snprintf(out_buf, out_cap, "{\"audits\":[");
+    for (size_t n = 0; n < hist->audit_count && pos < out_cap - 196; ++n) {
+        size_t idx = (hist->audit_head + EDGEHMI_MAX_AUDIT_LOGS - 1u - n) % EDGEHMI_MAX_AUDIT_LOGS;
+        const edgehmi_audit_record_t *a = &hist->audits[idx];
+        char esc_actor[48];
+        char esc_tag[64];
+        edgehmi_json_escape(a->actor, esc_actor, sizeof(esc_actor));
+        edgehmi_json_escape(a->tag_name, esc_tag, sizeof(esc_tag));
+        pos += (size_t)snprintf(
+            out_buf + pos, out_cap - pos,
+            "%s{\"id\":%lu,\"ts_ms\":%llu,\"source\":\"%s\",\"actor\":\"%s\","
+            "\"tag\":\"%s\",\"old\":%.4f,\"new\":%.4f}",
+            (n > 0) ? "," : "",
+            (unsigned long)a->id,
+            (unsigned long long)a->timestamp_ms,
+            audit_src_str(a->source),
+            esc_actor,
+            esc_tag,
+            (double)a->old_val,
+            (double)a->new_val);
+    }
+    pos += (size_t)snprintf(out_buf + pos, out_cap - pos, "]}");
+    return pos;
+}
+
+#define EDGEHMI_HIST_MAGIC 0x45484832u /* "EHH2" */
 
 typedef struct {
     uint32_t magic;
@@ -194,5 +264,9 @@ edgehmi_err_t edgehmi_history_load_file(edgehmi_history_t *hist, const char *pat
     hist->alarm_head = tmp.alarm_head % EDGEHMI_MAX_ALARMS;
     hist->alarm_count = tmp.alarm_count <= EDGEHMI_MAX_ALARMS ? tmp.alarm_count : EDGEHMI_MAX_ALARMS;
     hist->next_alarm_id = tmp.next_alarm_id > 0 ? tmp.next_alarm_id : 1;
+    memcpy(hist->audits, tmp.audits, sizeof(hist->audits));
+    hist->audit_head = tmp.audit_head % EDGEHMI_MAX_AUDIT_LOGS;
+    hist->audit_count = tmp.audit_count <= EDGEHMI_MAX_AUDIT_LOGS ? tmp.audit_count : EDGEHMI_MAX_AUDIT_LOGS;
+    hist->next_audit_id = tmp.next_audit_id > 0 ? tmp.next_audit_id : 1;
     return EDGEHMI_OK;
 }

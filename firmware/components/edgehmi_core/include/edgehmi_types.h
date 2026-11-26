@@ -24,8 +24,12 @@ extern "C" {
 #define EDGEHMI_MAX_TEXT_LEN        96
 #define EDGEHMI_MAX_UNIT_LEN        16
 #define EDGEHMI_MAX_ALARMS          32
+#define EDGEHMI_MAX_AUDIT_LOGS      48
 #define EDGEHMI_MAX_HISTORY_SAMPLES 256
 #define EDGEHMI_MAX_HISTORY_TAGS    8
+#define EDGEHMI_MAX_RECIPES         8
+#define EDGEHMI_MAX_RECIPE_ITEMS    12
+#define EDGEHMI_MAX_SCHEDULES       16
 
 typedef enum {
     EDGEHMI_OK = 0,
@@ -214,7 +218,9 @@ typedef enum {
     WIDGET_SPINBOX,
     WIDGET_ALARM_LIST,
     WIDGET_QRCODE,
-    WIDGET_IMAGE
+    WIDGET_IMAGE,
+    WIDGET_DROPDOWN,
+    WIDGET_LED
 } edgehmi_widget_type_t;
 
 typedef struct {
@@ -269,6 +275,8 @@ typedef struct {
     char host[64];
     uint16_t port;
     uint32_t timeout_ms;
+    bool server_enabled;   /* Northbound Modbus TCP Server gateway for SCADA/PLC */
+    uint16_t server_port;  /* Default 502 (or e.g. 1502) */
 } edgehmi_mb_tcp_cfg_t;
 
 typedef struct {
@@ -351,6 +359,34 @@ typedef struct {
 } edgehmi_net_cfg_t;
 
 typedef struct {
+    char tag_name[EDGEHMI_MAX_NAME_LEN];
+    int16_t tag_idx;
+    double value;
+} edgehmi_recipe_item_t;
+
+typedef struct {
+    char id[EDGEHMI_MAX_NAME_LEN];
+    char name[48];
+    edgehmi_recipe_item_t items[EDGEHMI_MAX_RECIPE_ITEMS];
+    size_t item_count;
+} edgehmi_recipe_t;
+
+typedef struct {
+    char id[EDGEHMI_MAX_NAME_LEN];
+    bool enabled;
+    int8_t hour;        /* 0..23 for daily time-of-day, or -1 if interval mode */
+    int8_t minute;      /* 0..59 */
+    uint8_t days_mask;  /* Bit 0=Sun .. Bit 6=Sat (0x7F = every day) */
+    uint32_t interval_s;/* >0 for monotonic interval trigger (seconds) */
+    bool use_recipe;
+    char recipe_id[EDGEHMI_MAX_NAME_LEN];
+    char target_tag[EDGEHMI_MAX_NAME_LEN];
+    int16_t target_tag_idx;
+    double write_value;
+    uint64_t last_fire_key;
+} edgehmi_schedule_t;
+
+typedef struct {
     char id[EDGEHMI_MAX_NAME_LEN];
     char title[48];
     edgehmi_widget_t widgets[EDGEHMI_MAX_WIDGETS_PER_PG];
@@ -365,6 +401,8 @@ typedef struct {
     bool dark_theme;
     uint32_t poll_interval_ms;
     uint32_t watchdog_timeout_s;
+    uint16_t idle_dim_s;          /* Auto-dim backlight after N idle seconds (0=off) */
+    uint8_t idle_brightness_pct;  /* Backlight % when idle-dimmed (default 15%) */
     char engineer_pin[16];
     char api_token[64];
 
@@ -388,6 +426,12 @@ typedef struct {
     /* Derived virtual calculation tags (power = V*I, deltaT, energy integration) */
     edgehmi_calc_tag_t calc_tags[EDGEHMI_MAX_CALC_TAGS];
     size_t calc_tag_count;
+
+    /* Industrial batch setpoint recipes & edge schedules */
+    edgehmi_recipe_t recipes[EDGEHMI_MAX_RECIPES];
+    size_t recipe_count;
+    edgehmi_schedule_t schedules[EDGEHMI_MAX_SCHEDULES];
+    size_t schedule_count;
 
     /* Network & Cloud MQTT telemetry */
     edgehmi_net_cfg_t net;

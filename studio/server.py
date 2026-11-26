@@ -33,6 +33,7 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "tools"))
 from discover_devices import discover_devices  # noqa: E402
+from import_dbc import parse_dbc_signals  # noqa: E402
 from pack_epk import verify_epk  # noqa: E402
 from validate_config import validate_config  # noqa: E402
 
@@ -54,12 +55,15 @@ class IndustrialRuntime:
         self.rule_state: dict[str, dict[str, Any]] = {}
         self.alarms: deque[dict[str, Any]] = deque(maxlen=40)
         self.next_alarm_id: int = 1
+        self.audits: deque[dict[str, Any]] = deque(maxlen=48)
+        self.next_audit_id: int = 1
+        self.sched_last_key: dict[str, int] = {}
         self.fault_overrides: dict[str, tuple[float, float]] = {}
         self.comm_loss: bool = False
         self.wifi_online: bool = True
         self.cell_online: bool = True
         self.cell_rssi_dbm: int = -71
-        self.fw_version: str = "2.2.0"
+        self.fw_version: str = "2.3.0"
         self.device_id: str = os.environ.get("EDGEHMI_DEVICE_ID", "edgehmi-sim001")
         self.http_port: int = 8765
         self.start_ts: float = time.time()
@@ -97,6 +101,19 @@ class IndustrialRuntime:
             "message": message,
         })
         self.next_alarm_id += 1
+
+    def _record_audit(self, source: str, actor: str, tag: str, old_val: float, new_val: float) -> None:
+        self.audits.appendleft({
+            "id": self.next_audit_id,
+            "ts": time.strftime("%H:%M:%S"),
+            "ts_ms": int(time.time() * 1000),
+            "source": source,
+            "actor": actor,
+            "tag": tag,
+            "old": round(float(old_val), 4),
+            "new": round(float(new_val), 4),
+        })
+        self.next_audit_id += 1
 
     def ack_alarms(self, alarm_id: int = 0) -> int:
         with self.lock:
@@ -159,6 +176,7 @@ class IndustrialRuntime:
             self.csv_history.clear()
             self.last_csv_ts = 0.0
             self.rule_state.clear()
+            self.sched_last_key.clear()
             self.fault_overrides.clear()
             self.comm_loss = False
             self.alarms.clear()
@@ -265,17 +283,47 @@ class IndustrialRuntime:
                     self._add_alarm("auth", "warn", f"Rejected protected write to {tag}: invalid Engineer PIN")
                     return 403, False, "Invalid Engineer PIN"
 
+            old_val = float(self.tags[tag]["value"])
             self.tags[tag]["value"] = float(value)
             self.tags[tag]["updated_ms"] = int(time.time() * 1000)
 
-            if not force and self.tags[tag].get("retentive"):
-                self.nvs_store[tag] = float(value)
-                self._save_nvs()
-                self._add_alarm("nvs", "info", f"NVS persisted: {tag} = {value}")
+            if not force:
+                self._record_audit("ui" if widget_id else "http", widget_id or "operator", tag, old_val, float(value))
+                if self.tags[tag].get("retentive"):
+                    self.nvs_store[tag] = float(value)
+                    self._save_nvs()
+                    self._add_alarm("nvs", "info", f"NVS persisted: {tag} = {value}")
 
             if force:
                 self.fault_overrides[tag] = (float(value), time.time() + 4.0)
             return 200, True, "ok"
+
+    def apply_recipe(self, recipe_id: str, actor: str = "operator") -> tuple[int, bool, str, int]:
+        with self.lock:
+            recipes = self.config.get("recipes", [])
+            target = next((r for r in recipes if r.get("id") == recipe_id), None)
+            if not target:
+                return 404, False, f"unknown recipe '{recipe_id}'", 0
+            items = target.get("items", [])
+            for it in items:
+                tn = it.get("tag", "")
+                if tn not in self.tags or self.tags[tn]["rw"] == "r":
+                    return 422, False, f"invalid or read-only recipe tag '{tn}'", 0
+            now_ms = int(time.time() * 1000)
+            applied = 0
+            for it in items:
+                tn = it["tag"]
+                nv = float(it["value"])
+                ov = float(self.tags[tn]["value"])
+                self.tags[tn]["value"] = nv
+                self.tags[tn]["updated_ms"] = now_ms
+                if self.tags[tn].get("retentive"):
+                    self.nvs_store[tn] = nv
+                self._record_audit("recipe", actor or recipe_id, tn, ov, nv)
+                applied += 1
+            self._save_nvs()
+            self._add_alarm("recipe", "info", f"Applied batch recipe '{target.get('name', recipe_id)}' ({applied} tags)")
+            return 200, True, "applied", applied
 
     def set_wan_state(self, wifi_online: bool | None = None, cell_online: bool | None = None) -> dict[str, Any]:
         with self.lock:
@@ -531,6 +579,48 @@ class IndustrialRuntime:
                 self.csv_history.append(row)
                 self.last_csv_ts = now
 
+            # Evaluate edge schedules (interval_s or daily HH:MM)
+            lt = time.localtime(now)
+            cur_hhmm = f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
+            wday_sun0 = (lt.tm_wday + 1) % 7
+            epoch_day = int(now // 86400)
+            for sc in self.config.get("schedules", []):
+                if not sc.get("enabled", True):
+                    continue
+                sid = sc["id"]
+                fire_key: int | None = None
+                iv = int(sc.get("interval_s", 0) or 0)
+                if iv > 0:
+                    bucket = int((now - self.start_ts) // iv)
+                    if bucket > 0 and self.sched_last_key.get(sid) != bucket:
+                        fire_key = bucket
+                elif sc.get("time") == cur_hhmm:
+                    dmask = int(sc.get("days_mask", 127) or 127)
+                    if dmask & (1 << wday_sun0):
+                        cand = (epoch_day + 1) * 1440 + lt.tm_hour * 60 + lt.tm_min
+                        if self.sched_last_key.get(sid) != cand:
+                            fire_key = cand
+                if fire_key is None:
+                    continue
+                self.sched_last_key[sid] = fire_key
+                if sc.get("recipe_id"):
+                    for r in self.config.get("recipes", []):
+                        if r.get("id") == sc["recipe_id"]:
+                            for it in r.get("items", []):
+                                tn = it["tag"]
+                                if tn in self.tags and self.tags[tn]["rw"] != "r":
+                                    ov = float(self.tags[tn]["value"])
+                                    nv = float(it["value"])
+                                    self.tags[tn]["value"] = nv
+                                    self._record_audit("schedule", sid, tn, ov, nv)
+                else:
+                    tt = sc.get("target_tag", "")
+                    if tt in self.tags and self.tags[tt]["rw"] != "r":
+                        ov = float(self.tags[tt]["value"])
+                        nv = float(sc.get("value", 0.0))
+                        self.tags[tt]["value"] = nv
+                        self._record_audit("schedule", sid, tt, ov, nv)
+
             for r in self.config.get("rules", []):
                 if not r.get("enabled", True):
                     continue
@@ -607,6 +697,7 @@ class IndustrialRuntime:
                 "history": {k: list(v) for k, v in self.history.items()},
                 "rules_state": self.rule_state,
                 "alarms": list(self.alarms),
+                "audits": list(self.audits),
             }
 
 
@@ -659,6 +750,9 @@ def make_handler(runtime: IndustrialRuntime):
             elif self.path == "/api/alarms":
                 snap = runtime.snapshot()
                 self._send_json(200, {"alarms": snap["alarms"]})
+            elif self.path == "/api/audit":
+                snap = runtime.snapshot()
+                self._send_json(200, {"audits": snap["audits"]})
             elif self.path == "/api/history.csv":
                 csv_bytes = runtime.export_history_csv().encode("utf-8")
                 self.send_response(200)
@@ -749,6 +843,26 @@ def make_handler(runtime: IndustrialRuntime):
                     aid = int(data.get("id", 0))
                     acked = runtime.ack_alarms(aid)
                     self._send_json(200, {"ok": True, "acked": acked})
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "message": str(exc)})
+            elif self.path == "/api/recipe/apply":
+                if not runtime.check_bearer_auth(self.headers.get("Authorization")):
+                    self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
+                    return
+                try:
+                    data = json.loads(raw)
+                    code, ok, msg, applied = runtime.apply_recipe(
+                        str(data.get("recipe_id", "")),
+                        actor=str(data.get("actor", "studio_ui")),
+                    )
+                    self._send_json(code, {"ok": ok, "message": msg, "applied": applied})
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "message": str(exc)})
+            elif self.path == "/api/tools/parse_dbc":
+                try:
+                    data = json.loads(raw)
+                    sigs = parse_dbc_signals(str(data.get("dbc", "")))
+                    self._send_json(200, {"ok": True, "signals": sigs, "count": len(sigs)})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
             elif self.path == "/api/comm_loss":

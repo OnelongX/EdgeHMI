@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EdgeHMI Studio v2.0 — ESP32-S3 全栈工业组态与边缘仿真 IDE</title>
+  <title>EdgeHMI Studio v2.3 — ESP32-S3 全栈工业组态与边缘仿真 IDE</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -102,6 +102,13 @@
       background: #111c2e; border: 1px dashed #38bdf8; border-radius: 8px;
       display: flex; align-items: center; justify-content: center; font-size: 12px; color: #7dd3fc;
     }
+    .w-dropdown select {
+      width: 100%; height: 100%; background: #0f172a; color: #f8fafc;
+      border: 1px solid #38bdf8; border-radius: 8px; padding: 0 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .w-led {
+      border-radius: 50%; border: 2px solid #64748b; background: #1e293b; transition: background 0.15s, box-shadow 0.15s;
+    }
     .comm-banner {
       position: absolute; top: 0; left: 0; right: 0; height: 32px;
       background: #dc2626; color: #fff; font-size: 13px; font-weight: 700;
@@ -180,7 +187,7 @@
 </head>
 <body>
   <header>
-    <h1>EdgeHMI Studio v2.0 · ESP32-S3 全栈工业组态与边缘仿真 IDE</h1>
+    <h1>EdgeHMI Studio v2.3 · ESP32-S3 全栈工业组态与边缘仿真 IDE</h1>
     <div class="meta">
       <span class="pill accent" id="mb-pill">Modbus Block Read: --</span>
       <span class="pill" id="wan-pill">WAN: Wi-Fi</span>
@@ -234,6 +241,12 @@
         </div>
 
         <div class="panel">
+          <h3>配方一键批量下发 (Recipes) · 合规操作审计 (Audit Trail)</h3>
+          <div class="btn-row" id="recipe-btns" style="margin-bottom: 8px;"></div>
+          <div id="audit-list" style="max-height:105px;overflow-y:auto;font-size:11.5px;color:#94a3b8;">暂无人工/配方/排程写入审计记录</div>
+        </div>
+
+        <div class="panel">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <h3 style="margin:0;">实时联锁 · 权限审计 · 告警日志</h3>
             <button class="ctrl-btn" onclick="ackAllAlarms()">全部确认 (ACK)</button>
@@ -245,14 +258,16 @@
       <!-- TAB 2: Visual Widget Property Inspector + Undo/Redo -->
       <div class="tab-pane" id="tab-insp">
         <div class="panel">
-          <h3>可视化控件属性面板 (支持 14 种工业控件 + Undo/Redo)</h3>
+          <h3>可视化控件属性面板 (支持 16 种工业控件 + Undo/Redo)</h3>
           <div class="btn-row" style="margin-bottom: 8px;">
-            <select id="new-widget-type" class="token-box" style="width:136px;">
+            <select id="new-widget-type" class="token-box" style="width:146px;">
               <option value="value">数值显示 (value)</option>
               <option value="gauge">圆弧仪表 (gauge)</option>
               <option value="bar">进度条 (bar)</option>
               <option value="slider">滑块设定 (slider)</option>
               <option value="spinbox">步进设定 (spinbox)</option>
+              <option value="dropdown">模式下拉框 (dropdown)</option>
+              <option value="led">圆形指示灯 (led)</option>
               <option value="button">按钮 (button)</option>
               <option value="switch">开关 (switch)</option>
               <option value="badge">状态徽章 (badge)</option>
@@ -307,6 +322,12 @@
             <div class="insp-field"><label>缩放 / 单位</label><div style="display:flex;gap:4px;"><input id="new-tag-scale" type="number" step="any" value="0.1" style="width:50%;" /><input id="new-tag-unit" placeholder="bar" style="width:50%;" /></div></div>
           </div>
           <button class="ctrl-btn primary" onclick="addModbusPoint()">+ 添加 Modbus 测点并热保存</button>
+        </div>
+
+        <div class="panel">
+          <h3>Vector .DBC 文件一键解析导入 CAN 信号 (BMS / 逆变器 / 伺服)</h3>
+          <textarea id="dbc-input" style="height:82px;margin-bottom:6px;" placeholder='BO_ 854 BMS_Status: 8 BMS&#10; SG_ PackVoltage : 0|16@1+ (0.01,0) [0|100] "V" Vector__XXX'></textarea>
+          <button class="ctrl-btn success" onclick="importDbcSignals()">解析 .DBC 并合并至 CAN 点表</button>
         </div>
       </div>
 
@@ -605,6 +626,8 @@ async function addWidget() {
   else if (type === 'alarm_list') { w.w = 260; w.h = 140; w.color = '#EF4444'; }
   else if (type === 'qrcode') { w.w = 96; w.h = 96; w.src = 'http://edgehmi.local'; }
   else if (type === 'image') { w.w = 140; w.h = 80; w.text = 'LOGO / IMG'; }
+  else if (type === 'dropdown') { w.w = 150; w.h = 38; w.text = 'Manual|Auto|Eco'; if (firstRw) w.bind = firstRw; }
+  else if (type === 'led') { w.w = 28; w.h = 28; w.color = '#10B981'; if (firstTag) w.bind = firstTag; }
 
   page.widgets.push(w);
   selectedWidgetId = id;
@@ -679,6 +702,35 @@ async function deleteModbusPoint(tag) {
   pushUndoSnapshot();
   currentConfig.modbus.points = currentConfig.modbus.points.filter(p => p.tag !== tag);
   await saveConfigRaw(JSON.stringify(currentConfig), `已移除 Modbus 测点 ${tag}`);
+}
+
+async function importDbcSignals() {
+  if (!currentConfig) return;
+  const dbc = document.getElementById('dbc-input').value.trim();
+  if (!dbc) return setStatus('请先粘贴 Vector .dbc 报文内容', '#f87171');
+  const r = await postJson('/api/tools/parse_dbc', { dbc });
+  if (!r.data.ok || !r.data.signals?.length) {
+    return setStatus('未识别到有效的 BO_ / SG_ CAN 信号定义', '#f87171');
+  }
+  pushUndoSnapshot();
+  currentConfig.can_bus = currentConfig.can_bus || { enabled: true, bitrate: 500000, tx_pin: 20, rx_pin: 19, signals: [] };
+  currentConfig.can_bus.enabled = true;
+  currentConfig.can_bus.signals = currentConfig.can_bus.signals || [];
+  const existing = new Set(getAllTagDefs().map(t => t.tag));
+  let added = 0;
+  for (const s of r.data.signals) {
+    if (!existing.has(s.tag)) {
+      currentConfig.can_bus.signals.push(s);
+      existing.add(s.tag);
+      added++;
+    }
+  }
+  await saveConfigRaw(JSON.stringify(currentConfig), `已从 .DBC 自动导入 ${added} 个 CAN 信号并热保存`);
+}
+
+async function applyRecipe(recipeId) {
+  const r = await postJson('/api/recipe/apply', { recipe_id: recipeId, actor: 'studio_ui' }, authHeaders());
+  setStatus(r.data.ok ? `配方 ${recipeId} 已原子批量下发 (${r.data.applied} 个设定点)` : `配方下发失败：${r.data.message}`, r.data.ok ? '#34d399' : '#f87171');
 }
 
 /* Visual Rule Table */
@@ -1227,6 +1279,23 @@ function renderHMI(state, forceRedraw = false) {
       el.innerHTML = renderQrSvg(String(w.src || w.text || 'http://edgehmi.local'), Math.min(w.w, w.h));
     } else if (w.type === 'image') {
       el.textContent = w.text || w.src || 'IMAGE';
+    } else if (w.type === 'dropdown') {
+      const sel = document.createElement('select');
+      const opts = String(w.text || 'Manual|Auto|Maint').split(/[\n|,]/);
+      opts.forEach((optTxt, idx) => {
+        const o = document.createElement('option');
+        o.value = String(idx);
+        o.textContent = optTxt.trim();
+        sel.appendChild(o);
+      });
+      sel.value = String(Math.max(0, Math.min(opts.length - 1, Math.round(val))));
+      sel.addEventListener('change', () => { if (!designMode && w.bind) writeTag(w.bind, parseInt(sel.value, 10)); });
+      el.appendChild(sel);
+    } else if (w.type === 'led') {
+      const on = Math.abs(val) > 0.5;
+      const col = sanitizeColor(w.color, '#10B981');
+      el.style.background = on ? col : '#1e293b';
+      el.style.boxShadow = on ? `0 0 12px ${col}` : 'none';
     } else if (w.type === 'badge') {
       const on = Math.abs(val) > 0.5;
       el.style.background = on ? sanitizeColor(w.color, '#10b981') : '#334155';
@@ -1264,6 +1333,42 @@ function renderHMI(state, forceRedraw = false) {
       attachDragHandlers(el, w, dev);
     }
     screen.appendChild(el);
+  }
+
+  /* Render Recipe Quick-Apply Buttons & Operation Audit Trail */
+  const rbox = document.getElementById('recipe-btns');
+  if (rbox) {
+    rbox.innerHTML = '';
+    const recs = state.config.recipes || [];
+    if (!recs.length) {
+      const sp = document.createElement('span');
+      sp.style.cssText = 'font-size:12px;color:#64748b;';
+      sp.textContent = '当前配置未定义 recipes 批量配方';
+      rbox.appendChild(sp);
+    } else {
+      for (const rc of recs) {
+        const b = document.createElement('button');
+        b.className = 'ctrl-btn success';
+        b.textContent = `⚡ 配方：${rc.name || rc.id} (${(rc.items || []).length}项)`;
+        b.addEventListener('click', () => applyRecipe(rc.id));
+        rbox.appendChild(b);
+      }
+    }
+  }
+  const abox = document.getElementById('audit-list');
+  if (abox) {
+    abox.innerHTML = '';
+    const audits = state.audits || [];
+    if (!audits.length) {
+      abox.textContent = '暂无人工/配方/排程写入审计记录';
+    } else {
+      for (const au of audits.slice(0, 8)) {
+        const d = document.createElement('div');
+        d.style.cssText = 'padding:3px 6px;border-bottom:1px solid #1e293b;color:#cbd5e1;';
+        d.textContent = `[${au.ts}] [${au.source}:${au.actor}] ${au.tag}: ${au.old} -> ${au.new}`;
+        abox.appendChild(d);
+      }
+    }
   }
 
   const al = document.getElementById('alarms');

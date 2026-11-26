@@ -116,6 +116,8 @@ static edgehmi_widget_type_t parse_widget_type(const char *s, bool *ok) {
     if (strcmp(s, "alarm_list") == 0) return WIDGET_ALARM_LIST;
     if (strcmp(s, "qrcode") == 0)     return WIDGET_QRCODE;
     if (strcmp(s, "image") == 0)      return WIDGET_IMAGE;
+    if (strcmp(s, "dropdown") == 0)   return WIDGET_DROPDOWN;
+    if (strcmp(s, "led") == 0)        return WIDGET_LED;
     *ok = false;
     return WIDGET_LABEL;
 }
@@ -153,6 +155,8 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
     out_cfg->dark_theme = true;
     out_cfg->poll_interval_ms = 250;
     out_cfg->watchdog_timeout_s = 10;
+    out_cfg->idle_dim_s = 0;
+    out_cfg->idle_brightness_pct = 15;
     copy_str(out_cfg->engineer_pin, sizeof(out_cfg->engineer_pin), "1234");
     out_cfg->mb_port = 1;
     out_cfg->mb_baudrate = 9600;
@@ -200,6 +204,14 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
     const cJSON *jwdt = cJSON_GetObjectItemCaseSensitive(jdev, "watchdog_timeout_s");
     if (cJSON_IsNumber(jwdt) && jwdt->valueint >= 3) {
         out_cfg->watchdog_timeout_s = (uint32_t)jwdt->valueint;
+    }
+    const cJSON *jdim = cJSON_GetObjectItemCaseSensitive(jdev, "idle_dim_s");
+    if (cJSON_IsNumber(jdim) && jdim->valueint >= 0 && jdim->valueint <= 65535) {
+        out_cfg->idle_dim_s = (uint16_t)jdim->valueint;
+    }
+    const cJSON *jib = cJSON_GetObjectItemCaseSensitive(jdev, "idle_brightness_pct");
+    if (cJSON_IsNumber(jib) && jib->valueint >= 0 && jib->valueint <= 100) {
+        out_cfg->idle_brightness_pct = (uint8_t)jib->valueint;
     }
     const cJSON *jpin = cJSON_GetObjectItemCaseSensitive(jdev, "engineer_pin");
     if (cJSON_IsString(jpin) && jpin->valuestring[0] != '\0') {
@@ -315,9 +327,10 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
         out_cfg->point_count++;
     }
 
-    /* optional: modbus_tcp */
+    /* optional: modbus_tcp (Southbound Client + Northbound SCADA Server Gateway) */
     out_cfg->modbus_tcp.port = 502;
     out_cfg->modbus_tcp.timeout_ms = 500;
+    out_cfg->modbus_tcp.server_port = 502;
     const cJSON *jmbtcp = cJSON_GetObjectItemCaseSensitive(root, "modbus_tcp");
     if (cJSON_IsObject(jmbtcp)) {
         const cJSON *jen = cJSON_GetObjectItemCaseSensitive(jmbtcp, "enabled");
@@ -328,6 +341,10 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
         if (cJSON_IsNumber(jport2) && jport2->valueint > 0) out_cfg->modbus_tcp.port = (uint16_t)jport2->valueint;
         const cJSON *jtmo2 = cJSON_GetObjectItemCaseSensitive(jmbtcp, "timeout_ms");
         if (cJSON_IsNumber(jtmo2) && jtmo2->valueint >= 50) out_cfg->modbus_tcp.timeout_ms = (uint32_t)jtmo2->valueint;
+        const cJSON *jsen = cJSON_GetObjectItemCaseSensitive(jmbtcp, "server_enabled");
+        out_cfg->modbus_tcp.server_enabled = cJSON_IsBool(jsen) && cJSON_IsTrue(jsen);
+        const cJSON *jsport = cJSON_GetObjectItemCaseSensitive(jmbtcp, "server_port");
+        if (cJSON_IsNumber(jsport) && jsport->valueint > 0) out_cfg->modbus_tcp.server_port = (uint16_t)jsport->valueint;
     }
 
     /* optional: local_io (native ESP32-S3 GPIO DI/DO/ADC/PWM mapped into unified Data Bus) */
@@ -625,6 +642,154 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
             if (cJSON_IsNumber(jpk)) out_cfg->net.cellular.pwrkey_pin = (int8_t)jpk->valueint;
             const cJSON *jrst = cJSON_GetObjectItemCaseSensitive(jcell, "reset_pin");
             if (cJSON_IsNumber(jrst)) out_cfg->net.cellular.reset_pin = (int8_t)jrst->valueint;
+        }
+    }
+
+    /* optional: recipes (batch setpoint presets) */
+    const cJSON *jrecipes = cJSON_GetObjectItemCaseSensitive(root, "recipes");
+    if (cJSON_IsArray(jrecipes)) {
+        const cJSON *jrec = NULL;
+        cJSON_ArrayForEach(jrec, jrecipes) {
+            if (out_cfg->recipe_count >= EDGEHMI_MAX_RECIPES) {
+                set_err(err_buf, err_buf_len, "exceeded max recipes");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_FULL;
+            }
+            const cJSON *jrid = cJSON_GetObjectItemCaseSensitive(jrec, "id");
+            const cJSON *jrname = cJSON_GetObjectItemCaseSensitive(jrec, "name");
+            const cJSON *jitems = cJSON_GetObjectItemCaseSensitive(jrec, "items");
+            if (!cJSON_IsString(jrid) || !cJSON_IsArray(jitems) || cJSON_GetArraySize(jitems) == 0) {
+                set_err(err_buf, err_buf_len, "recipe requires id and non-empty items");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            edgehmi_recipe_t *rec = &out_cfg->recipes[out_cfg->recipe_count];
+            memset(rec, 0, sizeof(*rec));
+            copy_str(rec->id, sizeof(rec->id), jrid->valuestring);
+            copy_str(rec->name, sizeof(rec->name), cJSON_IsString(jrname) ? jrname->valuestring : jrid->valuestring);
+
+            const cJSON *jit = NULL;
+            cJSON_ArrayForEach(jit, jitems) {
+                if (rec->item_count >= EDGEHMI_MAX_RECIPE_ITEMS) {
+                    set_err(err_buf, err_buf_len, "exceeded max recipe items");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_FULL;
+                }
+                const cJSON *jtag = cJSON_GetObjectItemCaseSensitive(jit, "tag");
+                const cJSON *jval = cJSON_GetObjectItemCaseSensitive(jit, "value");
+                if (!cJSON_IsString(jtag) || !cJSON_IsNumber(jval)) {
+                    set_err(err_buf, err_buf_len, "recipe item requires tag and value");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_SCHEMA;
+                }
+                edgehmi_recipe_item_t *it = &rec->items[rec->item_count];
+                copy_str(it->tag_name, sizeof(it->tag_name), jtag->valuestring);
+                it->tag_idx = edgehmi_bus_find(bus, it->tag_name);
+                if (it->tag_idx < 0) {
+                    set_err(err_buf, err_buf_len, "recipe item references unknown tag");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_NOT_FOUND;
+                }
+                if ((bus->tags[it->tag_idx].access & TAG_ACCESS_W) == 0) {
+                    set_err(err_buf, err_buf_len, "recipe item targets read-only tag");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_READONLY;
+                }
+                it->value = jval->valuedouble;
+                rec->item_count++;
+            }
+            out_cfg->recipe_count++;
+        }
+    }
+
+    /* optional: schedules (edge time-of-day or monotonic interval actions) */
+    const cJSON *jscheds = cJSON_GetObjectItemCaseSensitive(root, "schedules");
+    if (cJSON_IsArray(jscheds)) {
+        const cJSON *jsc = NULL;
+        cJSON_ArrayForEach(jsc, jscheds) {
+            if (out_cfg->schedule_count >= EDGEHMI_MAX_SCHEDULES) {
+                set_err(err_buf, err_buf_len, "exceeded max schedules");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_FULL;
+            }
+            const cJSON *jsid = cJSON_GetObjectItemCaseSensitive(jsc, "id");
+            if (!cJSON_IsString(jsid) || jsid->valuestring[0] == '\0') {
+                set_err(err_buf, err_buf_len, "schedule requires id");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            edgehmi_schedule_t *sc = &out_cfg->schedules[out_cfg->schedule_count];
+            memset(sc, 0, sizeof(*sc));
+            sc->enabled = true;
+            sc->hour = -1;
+            sc->days_mask = 0x7Fu;
+            sc->target_tag_idx = -1;
+            copy_str(sc->id, sizeof(sc->id), jsid->valuestring);
+
+            const cJSON *jsen = cJSON_GetObjectItemCaseSensitive(jsc, "enabled");
+            if (cJSON_IsBool(jsen)) sc->enabled = cJSON_IsTrue(jsen);
+            const cJSON *jdmask = cJSON_GetObjectItemCaseSensitive(jsc, "days_mask");
+            if (cJSON_IsNumber(jdmask) && jdmask->valueint > 0 && jdmask->valueint <= 127) {
+                sc->days_mask = (uint8_t)jdmask->valueint;
+            }
+            const cJSON *jintv = cJSON_GetObjectItemCaseSensitive(jsc, "interval_s");
+            const cJSON *jtime = cJSON_GetObjectItemCaseSensitive(jsc, "time");
+            if (cJSON_IsNumber(jintv) && jintv->valueint > 0) {
+                sc->interval_s = (uint32_t)jintv->valueint;
+            } else if (cJSON_IsString(jtime) && strlen(jtime->valuestring) == 5 && jtime->valuestring[2] == ':') {
+                int hh = atoi(jtime->valuestring);
+                int mm = atoi(jtime->valuestring + 3);
+                if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+                    set_err(err_buf, err_buf_len, "schedule time out of range (HH:MM)");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_SCHEMA;
+                }
+                sc->hour = (int8_t)hh;
+                sc->minute = (int8_t)mm;
+            } else {
+                set_err(err_buf, err_buf_len, "schedule requires interval_s (>0) or time ('HH:MM')");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+
+            const cJSON *jrecid = cJSON_GetObjectItemCaseSensitive(jsc, "recipe_id");
+            const cJSON *jttag = cJSON_GetObjectItemCaseSensitive(jsc, "target_tag");
+            const cJSON *jtval = cJSON_GetObjectItemCaseSensitive(jsc, "value");
+            if (cJSON_IsString(jrecid) && jrecid->valuestring[0] != '\0') {
+                sc->use_recipe = true;
+                copy_str(sc->recipe_id, sizeof(sc->recipe_id), jrecid->valuestring);
+                bool found = false;
+                for (size_t r = 0; r < out_cfg->recipe_count; ++r) {
+                    if (strcmp(out_cfg->recipes[r].id, sc->recipe_id) == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    set_err(err_buf, err_buf_len, "schedule references unknown recipe_id");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_NOT_FOUND;
+                }
+            } else if (cJSON_IsString(jttag) && cJSON_IsNumber(jtval)) {
+                copy_str(sc->target_tag, sizeof(sc->target_tag), jttag->valuestring);
+                sc->target_tag_idx = edgehmi_bus_find(bus, sc->target_tag);
+                if (sc->target_tag_idx < 0) {
+                    set_err(err_buf, err_buf_len, "schedule references unknown target_tag");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_NOT_FOUND;
+                }
+                if ((bus->tags[sc->target_tag_idx].access & TAG_ACCESS_W) == 0) {
+                    set_err(err_buf, err_buf_len, "schedule targets read-only tag");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_READONLY;
+                }
+                sc->write_value = jtval->valuedouble;
+            } else {
+                set_err(err_buf, err_buf_len, "schedule requires recipe_id or target_tag+value");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            out_cfg->schedule_count++;
         }
     }
 

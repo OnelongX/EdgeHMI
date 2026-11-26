@@ -28,10 +28,10 @@
 | :--- | :--- | :--- |
 | **实时底座** | **纯 ANSI C11 定长静态池**（`data_bus` / `modbus_rtu` / `rule_engine` / `config_loader`），零运行时堆碎片、零 GC 停顿 | 无虚拟机内存开销与 GC 抖动，扫描周期严格可预测 |
 | **双核隔离** | **Core 0** 承载 Wi-Fi / HTTP / OTA / mDNS & UDP 发现；**Core 1** 独占 RS485 轮询、安全联锁、TWDT 看门狗与 LVGL 9 渲染 | 网络抖动或 HTTP 并发请求绝不阻塞现场总线与急停逻辑 |
-| **多协议与本地 IO** | **Modbus RTU 块读（4 种字节序）+ Modbus TCP + 原生 CAN 2.0B (TWAI) + 板载 GPIO/ADC/PWM** 统一汇聚到同一套 `data_bus` | 轮询吞吐提升 **3x**，直连 PLC、电表、锂电 BMS 与物理急停按钮 |
-| **开箱即用 BSP** | 内置 `edgehmi_bsp`（`menuconfig` 一键选板：**Waveshare 4.3" / Sunton 8048S043 / 8048S070**，PSRAM 防撕裂双缓冲 + GT911 + 背光 PWM） | 无需手写 RGB 时序，刷机即亮屏 |
-| **确定性联锁** | 支持单条件 / 复合 `AND` & `OR` / **RS485 断线 Fail-Safe**、滞环、去抖与**持续强制锁定（`enforce`）** | 故障未解除期间人工误合闸会被下一扫描周期立即重新拉停 |
-| **全栈无代码 IDE** | **Studio v2.0 六标签工控工作台**：14 种控件（含 `slider/spinbox/alarm_list/qrcode/image`）、Undo/Redo、**可视化点表与规则表单**、真机实时镜像、WebSerial 串口监控 | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，无需手写 JSON |
+| **多协议与北向网关** | **Modbus RTU 块读（4 种字节序）+ Modbus TCP 主/从双向（自带北向 SCADA 协议转换网关）+ 原生 CAN 2.0B (TWAI v2) + 板载 GPIO/ADC/PWM** | 轮询吞吐提升 **3x**；南向采集电表/BMS/IO 后，上位机组态王/WinCC 可直接用标准 Modbus TCP 读取全测点 |
+| **开箱即用 BSP 与节能** | 内置 `edgehmi_bsp`（**Waveshare 4.3" / Sunton 8048S043 / 8048S070**，PSRAM 双缓冲 + GT911 + **闲置自动降背光节能 & 触摸/告警秒级亮屏唤醒**） | 无需手写 RGB 时序，大幅延长工业屏背光寿命并降低光储站点待机功耗 |
+| **确定性联锁与排程** | 支持单条件 / 复合 `AND` & `OR` / **RS485 断线 Fail-Safe**、滞环、去抖、**持续强制锁定（`enforce`）**、**批量配方（`recipes`）与边缘定时排程（`schedules` + SNTP）** | 故障未解除期间误合闸自动拉停；支持产线换型一键切配方与峰谷分时自动控制 |
+| **全栈无代码 IDE** | **Studio v2.3 六标签工控工作台**：**16 种工业控件**（新增 `dropdown`/`led`）、**配方一键下发、合规操作审计（Audit Trail）、Vector `.dbc` 一键导入 CAN 点表**、真机镜像、WebSerial | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，无需手写 JSON 或手算 CAN 位段 |
 | **4G/5G 多链路云边协同** | **Core 0 内置 4G Cat.1/Cat.4 & 5G RedCap/NR PPPoS 驱动**（兼容 Air780E / EC200 / RG255C / RM500U / FM650 + USB OTG ECM 预留）与 **Wi-Fi ↔ 4G/5G 自动主备切换** + MQTT 断网补传 | 野外无 Wi-Fi 泵站/光伏站直连公网，主链路断网自动切 4G/5G 零中断 |
 | **中文子集 & OTA** | `tools/build_font.py` 自动扫描组态汉字裁剪 LVGL 9 字库（~21KB）；双模 OTA（配置原子热推 + 固件 Push/Pull/离线 `.epk`）+ UDP 56888 发现 | 极小 Flash 占用解决真机中文显示，支持局域网批量部署与崩退回滚 |
 
@@ -94,7 +94,7 @@ esp32-ind-hmi/
 │   ├── sdkconfig.defaults.prod        # 量产安全强化（Secure Boot v2 + Flash/NVS 加密）
 │   ├── components/
 │   │   ├── edgehmi_core/              # 纯 C11 核心库（可脱离 ESP-IDF 宿主机独立编译测试）
-│   │   │   ├── include/ & src/        # data_bus / modbus_rtu / modbus_tcp / can_codec / calc_engine / cellular_proto / history_log / rule_engine / config_loader / ota_package / discovery_proto
+│   │   │   ├── include/ & src/        # data_bus / modbus_rtu / modbus_tcp(Client+Server) / can_codec / calc_engine / recipe_sched / cellular_proto / history_log(CSV+Audit) / rule_engine / config_loader / ota_package / discovery_proto
 │   │   │   └── third_party/cjson/     # 内置 MIT 官方 cJSON（ESP-IDF 6.x 自动切换 espressif/cjson）
 │   │   └── edgehmi_bsp/               # 开箱即用 ESP32-S3 屏 BSP（Waveshare 4.3" / Sunton 8048S043 / 8048S070 + Kconfig）
 │   └── main/                          # ESP32-S3 驱动与任务集成
@@ -112,15 +112,16 @@ esp32-ind-hmi/
 │   ├── server.py                      # 实时仿真、脱敏 API、历史 CSV、告警 Ack、真机镜像代理与 SSRF 防护
 │   └── web/index.html                 # 800×480 画布、14 控件渲染、6 标签 IDE（Inspector/点表/规则/镜像/WebSerial）
 ├── tools/                             # 工程化 CLI 工具链
-│   ├── validate_config.py             # Schema、越界、Modbus 块读、IO/CAN 与 NVS 冲突校验
+│   ├── validate_config.py             # Schema、越界、Modbus 块读、配方/排程、IO/CAN 与 NVS 冲突校验
+│   ├── import_dbc.py                  # Vector .dbc (BMS/逆变器/伺服) 报文一键解析生成 CAN signals
 │   ├── build_font.py                  # 自动扫描 config.json 汉字生成 LVGL 9 极简中文子集字库命令
 │   ├── discover_devices.py            # 局域网 UDP 56888 设备扫描
 │   ├── push_config.py                 # 校验并 Bearer 鉴权热推配置
 │   ├── pack_epk.py                    # EPK1 (SHA-256 + CRC32) 离线/OTA 升级包构建与验签
 │   └── ota_push.py                    # 远程固件流式推送
 └── tests/
-    ├── test_core.c                    # 纯 C11 核心 10 组单元测试（含 Modbus TCP / CAN / Calc / 4G/5G Failover / History CSV）
-    └── test_studio_e2e.py             # Studio v2.0 + OTA + 发现 + 安全 + 历史 + 镜像全链路 E2E 测试
+    ├── test_core.c                    # 纯 C11 核心 11 组单元测试（含 Modbus 网关 / 配方 / 排程 / 审计 / CAN / 4G-5G）
+    └── test_studio_e2e.py             # Studio v2.3 + 配方 + 审计 + DBC + OTA + 安全全链路 E2E 测试
 ```
 
 </details>

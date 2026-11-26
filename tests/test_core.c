@@ -8,6 +8,7 @@
 #include "modbus_rtu.h"
 #include "modbus_tcp.h"
 #include "ota_package.h"
+#include "recipe_sched.h"
 #include "rule_engine.h"
 
 #undef NDEBUG
@@ -576,6 +577,89 @@ static void test_cellular_4g_5g_and_failover(void) {
     printf("  [PASS] test_cellular_4g_5g_and_failover (CSQ + C5GREG/CEREG + 5G RedCap/SA + Failover)\n");
 }
 
+static void test_recipes_schedules_audit_and_mbtcp_gateway(void) {
+    /* 1. Northbound Modbus TCP Server Gateway (FC01/FC03 float32 & int16 / FC05 / FC16) */
+    edgehmi_bus_t gbus;
+    edgehmi_bus_init(&gbus, NULL, NULL, NULL);
+    int16_t t0 = -1, t1 = -1;
+    assert(edgehmi_bus_register(&gbus, "ro_temp", TAG_TYPE_F32, TAG_ACCESS_R, "C", 36.5, &t0) == EDGEHMI_OK);
+    assert(edgehmi_bus_register(&gbus, "rw_setp", TAG_TYPE_F32, TAG_ACCESS_RW, "C", 50.0, &t1) == EDGEHMI_OK);
+    edgehmi_bus_set(&gbus, t0, 36.5, TAG_QUAL_GOOD, 1000);
+    edgehmi_bus_set(&gbus, t1, 50.0, TAG_QUAL_GOOD, 1000);
+
+    uint8_t req[32], resp[64];
+    /* FC03 float32 read of tag[0] at reg 0..1 */
+    assert(edgehmi_mbtcp_build_read_req(0x1234u, 1, 3, 0, 2, req, sizeof(req)) == 12);
+    assert(edgehmi_mbtcp_handle_server_req(req, 12, &gbus, 1500, resp, sizeof(resp)) == 13);
+    assert(resp[0] == 0x12 && resp[1] == 0x34 && resp[7] == 3 && resp[8] == 4);
+    uint32_t fbits = ((uint32_t)resp[9] << 24) | ((uint32_t)resp[10] << 16) |
+                     ((uint32_t)resp[11] << 8) | (uint32_t)resp[12];
+    float fdec = 0.0f;
+    memcpy(&fdec, &fbits, sizeof(fdec));
+    assert(fabs((double)fdec - 36.5) < 1e-4);
+
+    /* FC03 int16 read of tag[1] at reg 1001 */
+    assert(edgehmi_mbtcp_build_read_req(0x1235u, 1, 3, 1001, 1, req, sizeof(req)) == 12);
+    assert(edgehmi_mbtcp_handle_server_req(req, 12, &gbus, 1500, resp, sizeof(resp)) == 11);
+    int16_t idec = (int16_t)(((uint16_t)resp[9] << 8) | resp[10]);
+    assert(idec == 50);
+
+    /* FC16 float32 write to read-only tag[0] (reg 0) -> Modbus exception 0x80|16, code 0x04 */
+    edgehmi_mb_point_t dummy_pt;
+    memset(&dummy_pt, 0, sizeof(dummy_pt));
+    dummy_pt.slave_id = 1;
+    dummy_pt.reg_addr = 0;
+    dummy_pt.type = TAG_TYPE_F32;
+    dummy_pt.byte_order = BYTE_ORDER_ABCD;
+    dummy_pt.scale = 1.0;
+    size_t wlen = edgehmi_mbtcp_build_write_multi(0x2001u, &dummy_pt, 88.25, req, sizeof(req));
+    assert(wlen == 17);
+    assert(edgehmi_mbtcp_handle_server_req(req, wlen, &gbus, 1600, resp, sizeof(resp)) == 9);
+    assert(resp[7] == (uint8_t)(16u | 0x80u) && resp[8] == 0x04u);
+
+    /* FC16 float32 write to writable tag[1] (reg 2) -> queues 88.25 on data_bus */
+    dummy_pt.reg_addr = 2;
+    wlen = edgehmi_mbtcp_build_write_multi(0x2002u, &dummy_pt, 88.25, req, sizeof(req));
+    assert(edgehmi_mbtcp_handle_server_req(req, wlen, &gbus, 1700, resp, sizeof(resp)) == 12);
+    double wpop = 0.0;
+    assert(edgehmi_bus_pop_write(&gbus, t1, &wpop) == true && fabs(wpop - 88.25) < 1e-4);
+
+    /* 2. Batch Recipes, Auto-Dim Config, Audit Trail & Time-of-Day Scheduler */
+    char *praw = read_file_all("configs/pump_station.json");
+    edgehmi_config_t *pcfg = (edgehmi_config_t *)calloc(1, sizeof(edgehmi_config_t));
+    edgehmi_bus_t pbus;
+    edgehmi_bus_init(&pbus, NULL, NULL, NULL);
+    char err[128] = {0};
+    assert(edgehmi_config_load_json(praw, pcfg, &pbus, err, sizeof(err)) == EDGEHMI_OK);
+    assert(pcfg->idle_dim_s == 180 && pcfg->idle_brightness_pct == 15);
+    assert(pcfg->modbus_tcp.server_enabled == true && pcfg->modbus_tcp.server_port == 1502);
+    assert(pcfg->recipe_count == 2 && pcfg->schedule_count == 2);
+
+    edgehmi_history_t *hist = (edgehmi_history_t *)calloc(1, sizeof(edgehmi_history_t));
+    edgehmi_history_init(hist, &pbus);
+    size_t applied = 0;
+    assert(edgehmi_recipe_apply(pcfg, "night_eco", &pbus, hist, "unit_test", 5000, &applied) == EDGEHMI_OK);
+    assert(applied == 2);
+    assert(edgehmi_bus_pop_write(&pbus, edgehmi_bus_find(&pbus, "target_level"), &wpop) && fabs(wpop - 55.0) < 1e-6);
+    assert(edgehmi_bus_pop_write(&pbus, edgehmi_bus_find(&pbus, "auto_mode"), &wpop) && fabs(wpop - 1.0) < 1e-6);
+
+    char audit_json[2048];
+    assert(edgehmi_history_export_audit_json(hist, audit_json, sizeof(audit_json)) > 30);
+    assert(strstr(audit_json, "\"source\":\"recipe\"") != NULL);
+    assert(strstr(audit_json, "\"actor\":\"unit_test\"") != NULL);
+
+    /* 06:30 daily schedule fires once on day 20000, does NOT double-fire in same minute, fires on day 20001 */
+    assert(edgehmi_schedules_eval(pcfg, &pbus, hist, 10000, true, 20000, 1, 6, 30) == 1);
+    assert(edgehmi_schedules_eval(pcfg, &pbus, hist, 10500, true, 20000, 1, 6, 30) == 0);
+    assert(edgehmi_schedules_eval(pcfg, &pbus, hist, 90000, true, 20001, 2, 6, 30) == 1);
+    assert(edgehmi_bus_pop_write(&pbus, edgehmi_bus_find(&pbus, "target_level"), &wpop) && fabs(wpop - 85.0) < 1e-6);
+
+    free(hist);
+    free(pcfg);
+    free(praw);
+    printf("  [PASS] test_recipes_schedules_audit_and_mbtcp_gateway (Modbus GW + Recipes + Audit + Scheduler)\n");
+}
+
 int main(void) {
     printf("Running EdgeHMI Full C11 Core Unit Tests...\n");
     test_data_bus();
@@ -588,6 +672,7 @@ int main(void) {
     test_security_and_nvs_keys();
     test_modbus_tcp_and_can_and_history();
     test_cellular_4g_5g_and_failover();
+    test_recipes_schedules_audit_and_mbtcp_gateway();
     printf("ALL FULL C11 CORE TESTS PASSED.\n");
     return 0;
 }

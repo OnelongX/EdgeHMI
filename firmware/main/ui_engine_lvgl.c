@@ -1,5 +1,6 @@
 #include "ui_engine_lvgl.h"
 
+#include "edgehmi_bsp.h"
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -38,6 +39,9 @@ static const edgehmi_config_t *s_cfg = NULL;
 static edgehmi_bus_t *s_bus = NULL;
 static edgehmi_history_t *s_hist = NULL;
 static uint32_t s_last_alarm_seq = 0;
+static uint32_t s_wake_alarm_seq = 0;
+static uint64_t s_alarm_wake_ms = 0;
+static bool s_backlight_dimmed = false;
 static EXT_RAM_BSS_ATTR ui_page_runtime_t s_pages[EDGEHMI_MAX_PAGES];
 static size_t s_page_count = 0;
 static size_t s_active_page = 0;
@@ -75,6 +79,16 @@ static void on_modal_cancel(lv_event_t *e) {
     close_pin_modal();
 }
 
+static void ui_write_with_audit(const edgehmi_widget_t *w, double new_val) {
+    if (!w || !s_bus || w->bind_tag_idx < 0) return;
+    uint64_t ts = now_ms();
+    double old_v = 0.0;
+    edgehmi_bus_get(s_bus, w->bind_tag_idx, &old_v, NULL);
+    if (edgehmi_bus_request_write(s_bus, w->bind_tag_idx, new_val, ts) == EDGEHMI_OK && s_hist) {
+        edgehmi_history_record_audit(s_hist, AUDIT_SRC_UI, w->id, w->bind_tag, old_v, new_val, ts);
+    }
+}
+
 static void execute_modal_write(void) {
     const edgehmi_widget_t *w = s_modal.widget;
     if (!w || !s_bus) {
@@ -92,7 +106,7 @@ static void execute_modal_write(void) {
         }
     }
     if (w->bind_tag_idx >= 0 && w->has_write_value) {
-        edgehmi_bus_request_write(s_bus, w->bind_tag_idx, w->write_value, now_ms());
+        ui_write_with_audit(w, w->write_value);
     }
     close_pin_modal();
 }
@@ -205,7 +219,7 @@ static void on_button_click(lv_event_t *e) {
         if (w->confirm || w->pin_required) {
             show_confirm_modal(w);
         } else {
-            edgehmi_bus_request_write(s_bus, w->bind_tag_idx, w->write_value, now_ms());
+            ui_write_with_audit(w, w->write_value);
         }
     }
 }
@@ -216,7 +230,7 @@ static void on_switch_change(lv_event_t *e) {
     if (!w || !s_bus || w->bind_tag_idx < 0) return;
 
     bool checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    edgehmi_bus_request_write(s_bus, w->bind_tag_idx, checked ? 1.0 : 0.0, now_ms());
+    ui_write_with_audit(w, checked ? 1.0 : 0.0);
 }
 
 static void on_slider_released(lv_event_t *e) {
@@ -225,7 +239,16 @@ static void on_slider_released(lv_event_t *e) {
     if (!w || !s_bus || w->bind_tag_idx < 0) return;
 
     int32_t v = lv_slider_get_value(sl);
-    edgehmi_bus_request_write(s_bus, w->bind_tag_idx, (double)v, now_ms());
+    ui_write_with_audit(w, (double)v);
+}
+
+static void on_dropdown_change(lv_event_t *e) {
+    const edgehmi_widget_t *w = (const edgehmi_widget_t *)lv_event_get_user_data(e);
+    lv_obj_t *dd = lv_event_get_target_obj(e);
+    if (!w || !s_bus || w->bind_tag_idx < 0) return;
+
+    uint32_t sel = lv_dropdown_get_selected(dd);
+    ui_write_with_audit(w, (double)sel);
 }
 
 static void on_spinbox_delta(const edgehmi_widget_t *w, double sign) {
@@ -236,7 +259,7 @@ static void on_spinbox_delta(const edgehmi_widget_t *w, double sign) {
     double nxt = cur + sign * step;
     if (nxt < w->min_val) nxt = w->min_val;
     if (nxt > w->max_val) nxt = w->max_val;
-    edgehmi_bus_request_write(s_bus, w->bind_tag_idx, nxt, now_ms());
+    ui_write_with_audit(w, nxt);
 }
 
 static void on_spinbox_dec(lv_event_t *e) {
@@ -336,6 +359,22 @@ static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t q
                 lv_label_set_text(b->aux_label, txt);
             }
             break;
+
+        case WIDGET_DROPDOWN:
+            if (val >= 0.0) {
+                lv_dropdown_set_selected(b->obj, (uint32_t)lround(val));
+            }
+            break;
+
+        case WIDGET_LED: {
+            bool on = fabs(val) > 0.5;
+            lv_obj_set_style_bg_color(
+                b->obj,
+                lv_color_hex(on ? w->color_rgb : 0x1E293Bu),
+                LV_PART_MAIN);
+            lv_obj_set_style_shadow_width(b->obj, on ? 14 : 0, LV_PART_MAIN);
+            break;
+        }
 
         default:
             break;
@@ -581,6 +620,29 @@ edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg,
                     lv_obj_center(im);
                     break;
                 }
+
+                case WIDGET_DROPDOWN: {
+                    obj = lv_dropdown_create(scr);
+                    char opts[EDGEHMI_MAX_TEXT_LEN];
+                    edgehmi_copy_str(opts, sizeof(opts), w->text[0] ? w->text : "Manual\nAuto\nMaint");
+                    for (size_t c = 0; opts[c] != '\0'; ++c) {
+                        if (opts[c] == '|' || opts[c] == ',') opts[c] = '\n';
+                    }
+                    lv_dropdown_set_options(obj, opts);
+                    lv_obj_add_event_cb(obj, on_dropdown_change, LV_EVENT_VALUE_CHANGED, (void *)w);
+                    break;
+                }
+
+                case WIDGET_LED: {
+                    obj = lv_obj_create(scr);
+                    lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+                    lv_obj_set_style_bg_color(obj, lv_color_hex(0x1E293Bu), LV_PART_MAIN);
+                    lv_obj_set_style_border_color(obj, lv_color_hex(0x64748Bu), LV_PART_MAIN);
+                    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+                    lv_obj_set_style_shadow_color(obj, lv_color_hex(w->color_rgb), LV_PART_MAIN);
+                    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+                    break;
+                }
             }
 
             if (obj) {
@@ -643,6 +705,30 @@ edgehmi_err_t edgehmi_ui_show_page(const char *page_id) {
 
 void edgehmi_ui_sync_tick(void) {
     if (!s_bus || s_page_count == 0) return;
+
+    /* Smart screen-saver backlight auto-dim & instant touch / alarm wakeup */
+    if (s_cfg && s_cfg->idle_dim_s > 0) {
+        uint64_t ts_now = now_ms();
+        if (s_hist && s_hist->next_alarm_id != s_wake_alarm_seq) {
+            s_wake_alarm_seq = s_hist->next_alarm_id;
+            s_alarm_wake_ms = ts_now;
+        }
+        uint32_t idle_ms = lv_display_get_inactive_time(NULL);
+        if (s_alarm_wake_ms > 0 && ts_now >= s_alarm_wake_ms) {
+            uint64_t since_alarm = ts_now - s_alarm_wake_ms;
+            if (since_alarm < (uint64_t)idle_ms) {
+                idle_ms = (uint32_t)since_alarm;
+            }
+        }
+        bool want_dim = (idle_ms >= (uint32_t)s_cfg->idle_dim_s * 1000u);
+        if (want_dim != s_backlight_dimmed) {
+            s_backlight_dimmed = want_dim;
+            edgehmi_bsp_set_backlight(want_dim ? s_cfg->idle_brightness_pct : 100u);
+        }
+    } else if (s_backlight_dimmed) {
+        s_backlight_dimmed = false;
+        edgehmi_bsp_set_backlight(100u);
+    }
 
     /* Check bus-wide RS485 health for Fail-Safe banner */
     if (s_comm_banner) {

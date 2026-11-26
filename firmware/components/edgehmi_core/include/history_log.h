@@ -24,6 +24,26 @@ typedef struct {
     char message[EDGEHMI_MAX_TEXT_LEN];
 } edgehmi_alarm_record_t;
 
+typedef enum {
+    AUDIT_SRC_UI = 0,
+    AUDIT_SRC_HTTP,
+    AUDIT_SRC_MQTT,
+    AUDIT_SRC_MODBUS_GW,
+    AUDIT_SRC_RECIPE,
+    AUDIT_SRC_SCHEDULE,
+    AUDIT_SRC_RULE
+} edgehmi_audit_src_t;
+
+typedef struct {
+    uint32_t id;
+    uint64_t timestamp_ms;
+    edgehmi_audit_src_t source;
+    char actor[24];
+    char tag_name[EDGEHMI_MAX_NAME_LEN];
+    float old_val;
+    float new_val;
+} edgehmi_audit_record_t;
+
 typedef struct {
     char tag_names[EDGEHMI_MAX_HISTORY_TAGS][EDGEHMI_MAX_NAME_LEN];
     int16_t tag_indices[EDGEHMI_MAX_HISTORY_TAGS];
@@ -37,6 +57,11 @@ typedef struct {
     size_t alarm_head;
     size_t alarm_count;
     uint32_t next_alarm_id;
+
+    edgehmi_audit_record_t audits[EDGEHMI_MAX_AUDIT_LOGS];
+    size_t audit_head;
+    size_t audit_count;
+    uint32_t next_audit_id;
 } edgehmi_history_t;
 
 /* Initialize historian and bind up to EDGEHMI_MAX_HISTORY_TAGS readable bus tags */
@@ -56,6 +81,18 @@ size_t edgehmi_history_export_csv(const edgehmi_history_t *hist, char *out_buf, 
 
 /* Export alarm audit list as JSON array into caller buffer */
 size_t edgehmi_history_export_alarms_json(const edgehmi_history_t *hist, char *out_buf, size_t out_cap);
+
+/* Record a write/recipe/schedule operation in the compliance audit trail */
+uint32_t edgehmi_history_record_audit(edgehmi_history_t *hist,
+                                      edgehmi_audit_src_t source,
+                                      const char *actor,
+                                      const char *tag_name,
+                                      double old_val,
+                                      double new_val,
+                                      uint64_t now_ms);
+
+/* Export operation audit trail as JSON object {"audits":[...]} (newest-first) */
+size_t edgehmi_history_export_audit_json(const edgehmi_history_t *hist, char *out_buf, size_t out_cap);
 
 /* Persist / restore history & alarm audit buffer to LittleFS/SD file across power cycles */
 edgehmi_err_t edgehmi_history_save_file(const edgehmi_history_t *hist, const char *path);

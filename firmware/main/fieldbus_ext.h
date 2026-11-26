@@ -3,6 +3,8 @@
 
 #include "data_bus.h"
 #include "edgehmi_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +23,11 @@ void edgehmi_mbtcp_scan_blocks(const edgehmi_config_t *cfg,
                                edgehmi_bus_t *bus,
                                edgehmi_mb_stats_t *stats,
                                uint64_t now_ms);
+
+/* Start Core 0 Northbound Modbus TCP Server Gateway for external SCADA / PLC polling */
+edgehmi_err_t edgehmi_mbtcp_server_start(const edgehmi_config_t *active_cfg,
+                                         edgehmi_bus_t *bus,
+                                         SemaphoreHandle_t cfg_mutex);
 
 #ifdef __cplusplus
 }

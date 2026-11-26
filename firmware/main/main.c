@@ -11,6 +11,7 @@
 #include "modbus_rtu.h"
 #include "ota_config.h"
 #include "ota_firmware.h"
+#include "recipe_sched.h"
 #include "rule_engine.h"
 #include "ui_engine_lvgl.h"
 
@@ -29,6 +30,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "edgehmi_main";
 
@@ -237,9 +239,21 @@ static void control_task(void *arg) {
         edgehmi_can_poll_rx(&s_active_cfg, &s_bus, ts);
         edgehmi_local_io_sync(&s_active_cfg, &s_bus, ts);
 
-        /* 3. Evaluate derived virtual calc_tags, stale check, interlock rules & persistent history */
+        /* 3. Evaluate derived virtual calc_tags, stale check, schedules, interlock rules & persistent history */
         edgehmi_calc_eval(s_active_cfg.calc_tags, s_active_cfg.calc_tag_count, &s_bus, ts);
         edgehmi_bus_check_stale(&s_bus, ts, interval_ms * 10ULL);
+        if (s_active_cfg.schedule_count > 0) {
+            time_t now_sec = time(NULL);
+            struct tm tm_info;
+            memset(&tm_info, 0, sizeof(tm_info));
+            localtime_r(&now_sec, &tm_info);
+            bool wall_ok = (tm_info.tm_year >= (2024 - 1900));
+            edgehmi_schedules_eval(&s_active_cfg, &s_bus, &s_history, ts, wall_ok,
+                                   wall_ok ? (uint32_t)(now_sec / 86400) : 0u,
+                                   (uint8_t)tm_info.tm_wday,
+                                   (uint8_t)tm_info.tm_hour,
+                                   (uint8_t)tm_info.tm_min);
+        }
         edgehmi_rules_eval(&s_rules, &s_bus, ts);
 
         static uint64_t s_last_hist_ms = 0;
@@ -346,6 +360,7 @@ static edgehmi_err_t reload_config_atomic(const char *json_buf, char *err_buf, s
                              ct->unit, 0.0, &ct->tag_idx);
     }
     edgehmi_calc_bind(s_active_cfg.calc_tags, s_active_cfg.calc_tag_count, &s_bus);
+    edgehmi_recipes_bind(&s_active_cfg, &s_bus);
 
     s_mb_block_count = edgehmi_mb_plan_blocks(
         s_active_cfg.points, s_active_cfg.point_count,
@@ -414,6 +429,7 @@ void app_main(void) {
     esp_netif_t *wifi_sta = edgehmi_net_start(&s_active_cfg);
     edgehmi_cellular_start(&s_active_cfg, wifi_sta, s_cfg_mutex);
     edgehmi_http_start(&s_bus, &s_active_cfg, &s_mb_stats, &s_history, s_cfg_mutex, reload_config_atomic);
+    edgehmi_mbtcp_server_start(&s_active_cfg, &s_bus, s_cfg_mutex);
     edgehmi_discovery_start(&s_active_cfg, &s_bus, s_cfg_mutex, 80);
     edgehmi_cloud_mqtt_start(&s_active_cfg, &s_bus, s_cfg_mutex);
 

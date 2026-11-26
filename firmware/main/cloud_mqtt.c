@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/task.h"
@@ -251,6 +252,9 @@ esp_netif_t *edgehmi_net_start(const edgehmi_config_t *cfg) {
     if (ssid[0] != '\0') {
         esp_wifi_connect();
     }
+    /* Start SNTP client so edge time-of-day schedules automatically sync UTC/local clock */
+    esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    esp_netif_sntp_init(&sntp_cfg);
     return sta_netif;
 }
 

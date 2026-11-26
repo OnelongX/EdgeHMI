@@ -44,6 +44,25 @@ edgehmi_err_t edgehmi_mbtcp_parse_block_resp(uint16_t expected_trans_id,
                                              edgehmi_bus_t *bus,
                                              uint64_t now_ms);
 
+/*
+ * Northbound Modbus TCP Server Gateway (SCADA / PLC protocol bridge):
+ *   - Coils / Discrete Inputs (FC01/FC02): addr i -> tag[i] boolean state (|val| > 0.5)
+ *   - Holding / Input Registers (FC03/FC04):
+ *       * addr 2*i .. 2*i+1 (0..255): IEEE-754 float32 (ABCD big-endian) of tag[i]
+ *       * addr 1000+i (1000..1127): signed int16 rounded engineering value of tag[i]
+ *   - Remote Writes:
+ *       * FC05 single coil i -> request_write(tag[i], 0.0 / 1.0)
+ *       * FC06 single register 1000+i -> request_write(tag[i], (int16_t)raw)
+ *       * FC16 two registers at 2*i -> IEEE-754 float32 request_write(tag[i], fval)
+ * Returns response frame length (>0) written to out_resp, or 0 on malformed MBAP header.
+ */
+size_t edgehmi_mbtcp_handle_server_req(const uint8_t *req,
+                                       size_t req_len,
+                                       edgehmi_bus_t *bus,
+                                       uint64_t now_ms,
+                                       uint8_t *out_resp,
+                                       size_t out_cap);
+
 #ifdef __cplusplus
 }
 #endif

@@ -7,6 +7,8 @@
     "theme": "dark",
     "poll_interval_ms": 250,
     "watchdog_timeout_s": 10,
+    "idle_dim_s": 180,
+    "idle_brightness_pct": 15,
     "engineer_pin": "1234",
     "api_token": "edgehmi-secret-2026"
   },
@@ -29,6 +31,11 @@
       { "tag": "auto_mode",    "slave": 1, "fc": 1, "addr": 2,   "type": "bool", "scale": 1.0,  "offset": 0, "unit": "",     "rw": "rw", "default": 1, "retentive": true },
       { "tag": "high_alarm",   "slave": 1, "fc": 1, "addr": 10,  "type": "bool", "scale": 1.0,  "offset": 0, "unit": "",     "rw": "rw", "default": 0 }
     ]
+  },
+  "modbus_tcp": {
+    "enabled": false,
+    "server_enabled": true,
+    "server_port": 1502
   },
   "local_io": [
     { "tag": "estop_di",   "pin": 11, "mode": "di", "active_low": true, "default": 0 },
@@ -56,6 +63,29 @@
       "reset_pin": -1
     }
   },
+  "recipes": [
+    {
+      "id": "peak_supply",
+      "name": "高峰满载保供",
+      "items": [
+        { "tag": "target_level", "value": 85.0 },
+        { "tag": "auto_mode", "value": 1 },
+        { "tag": "pump_cmd", "value": 1 }
+      ]
+    },
+    {
+      "id": "night_eco",
+      "name": "夜间低谷节能",
+      "items": [
+        { "tag": "target_level", "value": 55.0 },
+        { "tag": "auto_mode", "value": 1 }
+      ]
+    }
+  ],
+  "schedules": [
+    { "id": "sched_morning_peak", "enabled": true, "time": "06:30", "recipe_id": "peak_supply" },
+    { "id": "sched_night_eco",    "enabled": true, "time": "23:00", "recipe_id": "night_eco" }
+  ],
   "rules": [
     {
       "id": "rule_high_level_stop",

@@ -1,7 +1,9 @@
 #include "ota_config.h"
 #include "cellular_modem.h"
 #include "cloud_mqtt.h"
+#include "esp_timer.h"
 #include "ota_firmware.h"
+#include "recipe_sched.h"
 
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -320,6 +322,65 @@ static esp_err_t handle_ack_alarms(httpd_req_t *req) {
     return httpd_resp_sendstr(req, resp);
 }
 
+static esp_err_t handle_get_audit(httpd_req_t *req) {
+    if (!s_history) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "history not ready");
+    }
+    char *buf = (char *)edgehmi_alloc_buf(8192);
+    if (!buf) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+    edgehmi_history_export_audit_json(s_history, buf, 8192);
+    if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t rc = httpd_resp_sendstr(req, buf);
+    free(buf);
+    return rc;
+}
+
+static esp_err_t handle_apply_recipe(httpd_req_t *req) {
+    if (!check_bearer_auth(req)) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"unauthorized\"}");
+    }
+    char body[192] = {0};
+    if (req->content_len <= 0 || req->content_len >= (int)sizeof(body)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid payload");
+    }
+    int r = httpd_req_recv(req, body, req->content_len);
+    if (r <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
+    body[r] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    const cJSON *jrid = root ? cJSON_GetObjectItemCaseSensitive(root, "recipe_id") : NULL;
+    if (!cJSON_IsString(jrid) || jrid->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing recipe_id");
+    }
+
+    size_t applied = 0;
+    uint64_t ts = (uint64_t)(esp_timer_get_time() / 1000LL);
+    if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+    edgehmi_err_t rc = (s_active_cfg && s_bus)
+        ? edgehmi_recipe_apply(s_active_cfg, jrid->valuestring, s_bus, s_history, "http_api", ts, &applied)
+        : EDGEHMI_ERR_IO;
+    if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+    cJSON_Delete(root);
+
+    if (rc != EDGEHMI_OK) {
+        httpd_resp_set_status(req, "422 Unprocessable Entity");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"recipe not found or invalid\"}");
+    }
+    char resp[96];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"applied\":%u}", (unsigned)applied);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, resp);
+}
+
 static const char *s_setup_html =
     "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
     "<title>EdgeHMI Wi-Fi & 4G/5G Setup</title><style>body{font-family:sans-serif;background:#0b1220;color:#e2e8f0;padding:24px;max-width:440px;margin:auto}"
@@ -384,7 +445,7 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0; /* Pin HTTP/OTA management server to Core 0 */
-    config.max_uri_handlers = 14;
+    config.max_uri_handlers = 18;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
         return EDGEHMI_ERR_IO;
@@ -396,6 +457,8 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_uri_t u_hist   = { .uri = "/api/history.csv", .method = HTTP_GET,  .handler = handle_history_csv };
     httpd_uri_t u_alarms = { .uri = "/api/alarms",      .method = HTTP_GET,  .handler = handle_get_alarms };
     httpd_uri_t u_ack    = { .uri = "/api/alarms/ack",  .method = HTTP_POST, .handler = handle_ack_alarms };
+    httpd_uri_t u_audit  = { .uri = "/api/audit",       .method = HTTP_GET,  .handler = handle_get_audit };
+    httpd_uri_t u_recipe = { .uri = "/api/recipe/apply",.method = HTTP_POST, .handler = handle_apply_recipe };
     httpd_uri_t u_setup  = { .uri = "/setup",           .method = HTTP_GET,  .handler = handle_setup_page };
     httpd_uri_t u_wifi   = { .uri = "/api/wifi/setup",  .method = HTTP_POST, .handler = handle_wifi_setup };
 
@@ -405,6 +468,8 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_register_uri_handler(server, &u_hist);
     httpd_register_uri_handler(server, &u_alarms);
     httpd_register_uri_handler(server, &u_ack);
+    httpd_register_uri_handler(server, &u_audit);
+    httpd_register_uri_handler(server, &u_recipe);
     httpd_register_uri_handler(server, &u_setup);
     httpd_register_uri_handler(server, &u_wifi);
     edgehmi_ota_register_handlers(server, active_cfg, cfg_mutex);

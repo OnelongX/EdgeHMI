@@ -24,7 +24,7 @@ VALID_FCS = {1, 2, 3, 4, 5, 6, 16}
 VALID_OPS = {">", ">=", "<", "<=", "==", "!="}
 VALID_WIDGETS = {
     "card", "label", "value", "gauge", "bar", "button", "switch", "badge", "chart",
-    "slider", "spinbox", "alarm_list", "qrcode", "image",
+    "slider", "spinbox", "alarm_list", "qrcode", "image", "dropdown", "led",
 }
 VALID_IO_MODES = {"di", "do", "adc", "pwm"}
 VALID_CALC_OPS = {"add", "sub", "mul", "div", "avg", "integrate"}
@@ -248,6 +248,53 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
 
     if len(tags) > MAX_TAGS:
         errors.append(f"total tags across modbus+local_io+can ({len(tags)}) exceeds MAX_TAGS ({MAX_TAGS})")
+
+    # 2c. Optional Industrial Recipes & Edge Schedules
+    recipe_ids: set[str] = set()
+    recipes = cfg.get("recipes", [])
+    if isinstance(recipes, list):
+        if len(recipes) > 8:
+            errors.append(f"recipes count ({len(recipes)}) exceeds 8")
+        for idx, rec in enumerate(recipes):
+            rid = rec.get("id", "")
+            if not rid or rid in recipe_ids:
+                errors.append(f"recipes[{idx}]: missing or duplicate id '{rid}'")
+            recipe_ids.add(rid)
+            items = rec.get("items", [])
+            if not isinstance(items, list) or not (1 <= len(items) <= 12):
+                errors.append(f"recipes[{idx}] ({rid}): items must have 1..12 entries")
+                continue
+            for k, it in enumerate(items):
+                t = it.get("tag")
+                if t not in tags:
+                    errors.append(f"recipes[{idx}] ({rid}).items[{k}]: unknown tag '{t}'")
+                elif tags[t].get("rw", "r") == "r":
+                    errors.append(f"recipes[{idx}] ({rid}).items[{k}]: tag '{t}' is read-only")
+
+    schedules = cfg.get("schedules", [])
+    if isinstance(schedules, list):
+        if len(schedules) > 16:
+            errors.append(f"schedules count ({len(schedules)}) exceeds 16")
+        for idx, sc in enumerate(schedules):
+            sid = sc.get("id", "")
+            if not sid:
+                errors.append(f"schedules[{idx}]: missing id")
+            tm = sc.get("time")
+            iv = sc.get("interval_s")
+            if tm is not None:
+                if not isinstance(tm, str) or not re.match(r"^([01][0-9]|2[0-3]):[0-5][0-9]$", tm):
+                    errors.append(f"schedules[{idx}] ({sid}): invalid time '{tm}' (expected HH:MM)")
+            elif not (isinstance(iv, int) and iv > 0):
+                errors.append(f"schedules[{idx}] ({sid}): requires time ('HH:MM') or interval_s (>0)")
+            if sc.get("recipe_id"):
+                if sc["recipe_id"] not in recipe_ids:
+                    errors.append(f"schedules[{idx}] ({sid}): unknown recipe_id '{sc['recipe_id']}'")
+            else:
+                ttag = sc.get("target_tag")
+                if ttag not in tags:
+                    errors.append(f"schedules[{idx}] ({sid}): unknown target_tag '{ttag}'")
+                elif tags[ttag].get("rw", "r") == "r":
+                    errors.append(f"schedules[{idx}] ({sid}): target_tag '{ttag}' is read-only")
 
     # 3. Rules
     rules = cfg.get("rules", [])

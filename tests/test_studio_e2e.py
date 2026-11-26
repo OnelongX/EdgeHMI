@@ -244,7 +244,35 @@ def main() -> int:
             code, w_rec = req_json("POST", "/api/wan/failover", {"wifi_online": True})
             assert code == 200 and w_rec["wan"]["active_link"] == "wifi"
 
-            print("ALL FULL STUDIO v2.2 + 4G/5G + OTA + DISCOVERY + SECURITY + HISTORIAN E2E TESTS PASSED.")
+            # 10. Batch Recipes, Operation Audit Trail & Vector .DBC CAN Signal Importer
+            code, rec_unauth = req_json("POST", "/api/recipe/apply", {"recipe_id": "zero_export_strict"})
+            assert code == 401 and not rec_unauth["ok"]
+            code, rec_ok = req_json(
+                "POST", "/api/recipe/apply",
+                {"recipe_id": "zero_export_strict", "actor": "e2e_operator"},
+                token=TOKEN,
+            )
+            assert code == 200 and rec_ok["ok"] and rec_ok["applied"] == 3
+            _, st_rec = req_json("GET", "/api/state")
+            assert st_rec["tags"]["power_limit"]["value"] == 80.0
+
+            code, aud_res = req_json("GET", "/api/audit")
+            assert code == 200 and len(aud_res.get("audits", [])) >= 3
+            assert any(a["source"] == "recipe" and a["actor"] == "e2e_operator" for a in aud_res["audits"])
+
+            sample_dbc = (
+                'BO_ 854 BMS_Pack: 8 BMS\n'
+                ' SG_ CellMaxTemp : 32|16@1- (0.1,-40) [-40|125] "C" Vector__XXX\n'
+                'BO_ 2147484000 Ext_Inv: 8 INV\n'
+                ' SG_ BusVolt : 7|16@0+ (0.1,0) [0|1000] "V" Vector__XXX\n'
+            )
+            code, dbc_res = req_json("POST", "/api/tools/parse_dbc", {"dbc": sample_dbc})
+            assert code == 200 and dbc_res["ok"] and dbc_res["count"] == 2
+            s0, s1 = dbc_res["signals"][0], dbc_res["signals"][1]
+            assert s0["tag"] == "cellmaxtemp" and s0["signed"] is True and s0["offset"] == -40.0
+            assert s1["ext_id"] is True and s1["big_endian"] is True and s1["start_bit"] == 0
+
+            print("ALL FULL STUDIO v2.3 + RECIPES + AUDIT + DBC + 4G/5G + OTA + SECURITY E2E TESTS PASSED.")
             return 0
         finally:
             proc.terminate()
