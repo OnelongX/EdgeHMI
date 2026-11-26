@@ -1,7 +1,7 @@
 #include "edgehmi_bsp.h"
 
 #include "driver/gpio.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
@@ -21,6 +21,10 @@ static lv_display_t *s_disp = NULL;
 static lv_indev_t *s_indev = NULL;
 static esp_lcd_panel_handle_t s_panel = NULL;
 static esp_lcd_touch_handle_t s_touch = NULL;
+static i2c_master_bus_handle_t s_i2c_bus = NULL;
+#if defined(CONFIG_EDGEHMI_BOARD_WAVESHARE_43)
+static i2c_master_dev_handle_t s_ch422g_out = NULL;
+#endif
 
 /* Pre-verified pinouts for popular ESP32-S3 800x480 industrial RGB boards */
 #if defined(CONFIG_EDGEHMI_BOARD_WAVESHARE_43)
@@ -116,30 +120,44 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 #if defined(CONFIG_EDGEHMI_BOARD_WAVESHARE_43)
 static void waveshare_ch422g_enable(void) {
     /* CH422G I2C IO expander: 0x24 = set EXIO output mode; 0x38 = pull TP_RST, LCD_BL, LCD_RST high */
-    uint8_t mode_val = 0x01u;
-    i2c_master_write_to_device(I2C_NUM_0, 0x24, &mode_val, 1, pdMS_TO_TICKS(50));
-    uint8_t rst_low = 0x0Au;  /* TP_RST=0, LCD_BL=1, LCD_RST=1 */
-    i2c_master_write_to_device(I2C_NUM_0, 0x38, &rst_low, 1, pdMS_TO_TICKS(50));
-    vTaskDelay(pdMS_TO_TICKS(20));
-    uint8_t all_on = 0x0Eu;   /* EXIO1(TP_RST)=1, EXIO2(LCD_BL)=1, EXIO3(LCD_RST)=1 */
-    i2c_master_write_to_device(I2C_NUM_0, 0x38, &all_on, 1, pdMS_TO_TICKS(50));
-    vTaskDelay(pdMS_TO_TICKS(50));
-    ESP_LOGI(TAG, "Waveshare CH422G expander enabled (LCD backlight + GT911 reset)");
+    i2c_master_dev_handle_t mode_dev = NULL;
+    i2c_device_config_t d_mode = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x24,
+        .scl_speed_hz = 400000,
+    };
+    i2c_device_config_t d_out = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x38,
+        .scl_speed_hz = 400000,
+    };
+    if (i2c_master_bus_add_device(s_i2c_bus, &d_mode, &mode_dev) == ESP_OK &&
+        i2c_master_bus_add_device(s_i2c_bus, &d_out, &s_ch422g_out) == ESP_OK) {
+        uint8_t mode_val = 0x01u;
+        uint8_t rst_low  = 0x0Au; /* TP_RST=0, LCD_BL=1, LCD_RST=1 */
+        uint8_t all_on   = 0x0Eu; /* EXIO1(TP_RST)=1, EXIO2(LCD_BL)=1, EXIO3(LCD_RST)=1 */
+        i2c_master_transmit(mode_dev, &mode_val, 1, 50);
+        i2c_master_transmit(s_ch422g_out, &rst_low, 1, 50);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        i2c_master_transmit(s_ch422g_out, &all_on, 1, 50);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        i2c_master_bus_rm_device(mode_dev);
+        ESP_LOGI(TAG, "Waveshare CH422G expander enabled (LCD backlight + GT911 reset)");
+    }
 }
 #endif
 
 static void init_touch_gt911(void) {
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = I2C_NUM_0,
         .sda_io_num = BSP_TOUCH_SDA,
         .scl_io_num = BSP_TOUCH_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
-    if (i2c_param_config(I2C_NUM_0, &conf) != ESP_OK ||
-        i2c_driver_install(I2C_NUM_0, conf.mode, 0, 0, 0) != ESP_OK) {
-        ESP_LOGW(TAG, "Touch I2C0 init failed");
+    if (i2c_new_master_bus(&bus_cfg, &s_i2c_bus) != ESP_OK) {
+        ESP_LOGW(TAG, "Touch I2C0 master bus init failed");
         return;
     }
 
@@ -149,7 +167,8 @@ static void init_touch_gt911(void) {
 
     esp_lcd_panel_io_handle_t tp_io = NULL;
     esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-    if (esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)I2C_NUM_0, &tp_io_cfg, &tp_io) != ESP_OK) {
+    tp_io_cfg.scl_speed_hz = 400000;
+    if (esp_lcd_new_panel_io_i2c(s_i2c_bus, &tp_io_cfg, &tp_io) != ESP_OK) {
         ESP_LOGW(TAG, "GT911 panel IO create failed");
         return;
     }
@@ -200,8 +219,10 @@ static void init_backlight_pwm(void) {
 
 void edgehmi_bsp_set_backlight(uint8_t percent) {
 #if defined(CONFIG_EDGEHMI_BOARD_WAVESHARE_43)
-    uint8_t val = (percent > 0) ? 0x0Eu : 0x0Au;
-    i2c_master_write_to_device(I2C_NUM_0, 0x38, &val, 1, pdMS_TO_TICKS(50));
+    if (s_ch422g_out) {
+        uint8_t val = (percent > 0) ? 0x0Eu : 0x0Au;
+        i2c_master_transmit(s_ch422g_out, &val, 1, 50);
+    }
 #endif
     if (s_info.backlight_gpio < 0) {
         return;
