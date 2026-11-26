@@ -1,12 +1,23 @@
 #include "fieldbus_ext.h"
 
 #include "can_codec.h"
-#include "driver/twai.h"
+#include "driver/gpio.h"
+#include "esp_attr.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "modbus_rtu.h"
 #include "modbus_tcp.h"
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+#include "esp_twai.h"
+#include "esp_twai_onchip.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#else
+#include "driver/twai.h"
+#endif
 
 #include <string.h>
 #include <sys/time.h>
@@ -16,6 +27,42 @@ static bool s_can_running = false;
 static int s_tcp_sock = -1;
 static uint16_t s_tcp_tid = 1;
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+typedef struct {
+    uint32_t id;
+    uint8_t extd;
+    uint8_t dlc;
+    uint8_t data[8];
+} can_rx_item_t;
+
+static twai_node_handle_t s_twai_node = NULL;
+static QueueHandle_t s_can_rx_q = NULL;
+
+static bool IRAM_ATTR on_twai_rx_done(twai_node_handle_t handle,
+                                      const twai_rx_done_event_data_t *edata,
+                                      void *user_ctx) {
+    (void)edata;
+    (void)user_ctx;
+    uint8_t buf[8] = {0};
+    twai_frame_t frame = {
+        .buffer = buf,
+        .buffer_len = sizeof(buf),
+    };
+    if (twai_node_receive_from_isr(handle, &frame) == ESP_OK &&
+        !frame.header.rtr && frame.header.dlc <= 8 && s_can_rx_q) {
+        can_rx_item_t item;
+        item.id = frame.header.id;
+        item.extd = frame.header.ide ? 1u : 0u;
+        item.dlc = (uint8_t)frame.header.dlc;
+        memcpy(item.data, buf, item.dlc);
+        BaseType_t woken = pdFALSE;
+        xQueueSendFromISR(s_can_rx_q, &item, &woken);
+        return woken == pdTRUE;
+    }
+    return false;
+}
+#endif
+
 edgehmi_err_t edgehmi_fieldbus_ext_configure(const edgehmi_config_t *cfg) {
     if (!cfg) return EDGEHMI_ERR_INVALID_ARG;
 
@@ -24,6 +71,51 @@ edgehmi_err_t edgehmi_fieldbus_ext_configure(const edgehmi_config_t *cfg) {
         s_tcp_sock = -1;
     }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+    if (s_twai_node) {
+        twai_node_disable(s_twai_node);
+        twai_node_delete(s_twai_node);
+        s_twai_node = NULL;
+        s_can_running = false;
+    }
+    if (cfg->can_bus.enabled && cfg->can_bus.tx_pin >= 0 && cfg->can_bus.rx_pin >= 0) {
+        if (!s_can_rx_q) {
+            s_can_rx_q = xQueueCreate(32, sizeof(can_rx_item_t));
+        }
+        twai_onchip_node_config_t ncfg = {
+            .io_cfg = {
+                .tx = (gpio_num_t)cfg->can_bus.tx_pin,
+                .rx = (gpio_num_t)cfg->can_bus.rx_pin,
+                .quanta_clk_out = GPIO_NUM_NC,
+                .bus_off_indicator = GPIO_NUM_NC,
+            },
+            .bit_timing = {
+                .bitrate = cfg->can_bus.bitrate >= 25000 ? cfg->can_bus.bitrate : 500000,
+            },
+            .fail_retry_cnt = -1,
+            .tx_queue_depth = 8,
+        };
+        twai_event_callbacks_t cbs = {
+            .on_rx_done = on_twai_rx_done,
+        };
+        if (s_can_rx_q &&
+            twai_new_node_onchip(&ncfg, &s_twai_node) == ESP_OK &&
+            twai_node_register_event_callbacks(s_twai_node, &cbs, NULL) == ESP_OK &&
+            twai_node_enable(s_twai_node) == ESP_OK) {
+            s_can_running = true;
+            ESP_LOGI(TAG, "TWAI v2 CAN 2.0B started (%lu bps, TX=%d RX=%d, %u signals)",
+                     (unsigned long)ncfg.bit_timing.bitrate,
+                     (int)cfg->can_bus.tx_pin, (int)cfg->can_bus.rx_pin,
+                     (unsigned)cfg->can_bus.signal_count);
+        } else {
+            if (s_twai_node) {
+                twai_node_delete(s_twai_node);
+                s_twai_node = NULL;
+            }
+            ESP_LOGE(TAG, "TWAI v2 CAN driver start failed");
+        }
+    }
+#else
     if (s_can_running) {
         twai_stop();
         twai_driver_uninstall();
@@ -51,6 +143,7 @@ edgehmi_err_t edgehmi_fieldbus_ext_configure(const edgehmi_config_t *cfg) {
             ESP_LOGE(TAG, "TWAI CAN driver start failed");
         }
     }
+#endif
     return EDGEHMI_OK;
 }
 
@@ -59,6 +152,17 @@ size_t edgehmi_can_poll_rx(const edgehmi_config_t *cfg, edgehmi_bus_t *bus, uint
         return 0;
     }
     size_t updated = 0;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+    if (!s_can_rx_q) return 0;
+    can_rx_item_t item;
+    for (int i = 0; i < 16; ++i) {
+        if (xQueueReceive(s_can_rx_q, &item, 0) != pdTRUE) {
+            break;
+        }
+        updated += edgehmi_can_ingest_frame(
+            &cfg->can_bus, item.id, item.extd != 0, item.data, item.dlc, bus, now_ms);
+    }
+#else
     twai_message_t msg;
     for (int i = 0; i < 16; ++i) {
         if (twai_receive(&msg, 0) != ESP_OK) {
@@ -71,6 +175,7 @@ size_t edgehmi_can_poll_rx(const edgehmi_config_t *cfg, edgehmi_bus_t *bus, uint
             &cfg->can_bus, msg.identifier, msg.extd != 0,
             msg.data, msg.data_length_code, bus, now_ms);
     }
+#endif
     return updated;
 }
 
