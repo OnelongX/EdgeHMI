@@ -256,7 +256,12 @@ edgehmi_err_t edgehmi_bsp_init(void) {
             .flags.pclk_active_neg = true,
         },
         .data_width = 16,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+        .in_color_format = LCD_COLOR_FMT_RGB565,
+        .out_color_format = LCD_COLOR_FMT_RGB565,
+#else
         .bits_per_pixel = 16,
+#endif
         .num_fbs = 2,
         .bounce_buffer_size_px = s_info.width * 10,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)

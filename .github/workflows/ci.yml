@@ -65,7 +65,7 @@ jobs:
           echo "${{ matrix.kconfig }}" > sdkconfig.ci.board
           set -o pipefail
           if ! (idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.board" set-target esp32s3 && idf.py build) 2>&1 | tee build.log; then
-            ERRS=$(grep -A 5 -E "CMake Error|error:|undefined reference|overflowed|multiple definition|ld:|FAILED:" build.log | tail -n 35 | tr '\n' ' ' | cut -c1-1800 || true)
+            ERRS=$(grep -A 4 -E "CMake Error|\berror:|fatal error:|undefined reference|overflowed|multiple definition|collect2:|FAILED:" build.log | tail -n 35 | tr '\n' ' ' | cut -c1-1800 || true)
             TAIL=$(tail -n 25 build.log | tr '\n' ' ' | cut -c1-1800 || true)
             echo "::error title=IDF Build Errors::${ERRS:-$TAIL}"
             exit 1
