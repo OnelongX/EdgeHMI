@@ -72,6 +72,7 @@ bool edgehmi_bus_consume_ui_dirty(edgehmi_bus_t *bus, int16_t idx);
 size_t edgehmi_bus_check_stale(edgehmi_bus_t *bus, uint64_t now_ms, uint64_t max_age_ms);
 
 /* Security & storage utilities shared across core and firmware */
+void edgehmi_copy_str(char *dst, size_t cap, const char *src);
 bool edgehmi_ct_str_eq(const char *a, const char *b);
 size_t edgehmi_json_escape(const char *src, char *dst, size_t dst_cap);
 void edgehmi_nvs_safe_key(const char *tag_name, char out_key[16]);

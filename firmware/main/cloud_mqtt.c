@@ -47,10 +47,8 @@ static void offline_enqueue(const char *topic, const char *payload) {
     } else {
         s_oq_count++;
     }
-    strncpy(s_offline_q[idx].topic, topic, sizeof(s_offline_q[idx].topic) - 1);
-    s_offline_q[idx].topic[sizeof(s_offline_q[idx].topic) - 1] = '\0';
-    strncpy(s_offline_q[idx].payload, payload, sizeof(s_offline_q[idx].payload) - 1);
-    s_offline_q[idx].payload[sizeof(s_offline_q[idx].payload) - 1] = '\0';
+    edgehmi_copy_str(s_offline_q[idx].topic, sizeof(s_offline_q[idx].topic), topic);
+    edgehmi_copy_str(s_offline_q[idx].payload, sizeof(s_offline_q[idx].payload), payload);
     xSemaphoreGive(s_oq_mutex);
 }
 
@@ -84,7 +82,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
         char prefix[48] = "edgehmi";
         if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
         if (s_cfg && s_cfg->cloud.topic_prefix[0]) {
-            strncpy(prefix, s_cfg->cloud.topic_prefix, sizeof(prefix) - 1);
+            edgehmi_copy_str(prefix, sizeof(prefix), s_cfg->cloud.topic_prefix);
         }
         if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
         snprintf(sub_topic, sizeof(sub_topic), "%s/%s/cmd/write", prefix, s_dev_id);
@@ -139,7 +137,7 @@ static void mqtt_telemetry_task(void *arg) {
                 interval_ms = s_cfg->cloud.publish_interval_ms;
             }
             if (s_cfg->cloud.topic_prefix[0]) {
-                strncpy(prefix, s_cfg->cloud.topic_prefix, sizeof(prefix) - 1);
+                edgehmi_copy_str(prefix, sizeof(prefix), s_cfg->cloud.topic_prefix);
             }
         }
 
@@ -175,8 +173,8 @@ edgehmi_err_t edgehmi_net_save_wifi(const char *ssid, const char *password) {
         nvs_close(h);
     }
     wifi_config_t sta = {0};
-    strncpy((char *)sta.sta.ssid, ssid, sizeof(sta.sta.ssid) - 1);
-    if (password) strncpy((char *)sta.sta.password, password, sizeof(sta.sta.password) - 1);
+    edgehmi_copy_str((char *)sta.sta.ssid, sizeof(sta.sta.ssid), ssid);
+    if (password) edgehmi_copy_str((char *)sta.sta.password, sizeof(sta.sta.password), password);
     esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_set_config(WIFI_IF_STA, &sta);
     esp_wifi_disconnect();
@@ -210,14 +208,14 @@ edgehmi_err_t edgehmi_net_start(const edgehmi_config_t *cfg) {
         nvs_close(h);
     }
     if (ssid[0] == '\0' && cfg && cfg->net.ssid[0] != '\0') {
-        strncpy(ssid, cfg->net.ssid, sizeof(ssid) - 1);
-        strncpy(pass, cfg->net.password, sizeof(pass) - 1);
+        edgehmi_copy_str(ssid, sizeof(ssid), cfg->net.ssid);
+        edgehmi_copy_str(pass, sizeof(pass), cfg->net.password);
     }
 
     if (ssid[0] != '\0') {
         wifi_config_t sta = {0};
-        strncpy((char *)sta.sta.ssid, ssid, sizeof(sta.sta.ssid) - 1);
-        strncpy((char *)sta.sta.password, pass, sizeof(sta.sta.password) - 1);
+        edgehmi_copy_str((char *)sta.sta.ssid, sizeof(sta.sta.ssid), ssid);
+        edgehmi_copy_str((char *)sta.sta.password, sizeof(sta.sta.password), pass);
         esp_wifi_set_mode((!cfg || cfg->net.ap_fallback) ? WIFI_MODE_APSTA : WIFI_MODE_STA);
         esp_wifi_set_config(WIFI_IF_STA, &sta);
     } else {
@@ -228,7 +226,7 @@ edgehmi_err_t edgehmi_net_start(const edgehmi_config_t *cfg) {
     if (!cfg || cfg->net.ap_fallback || ssid[0] == '\0') {
         wifi_config_t ap = {0};
         snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "EdgeHMI-%02X%02X", mac[4], mac[5]);
-        strncpy((char *)ap.ap.password, "edgehmi2026", sizeof(ap.ap.password) - 1);
+        edgehmi_copy_str((char *)ap.ap.password, sizeof(ap.ap.password), "edgehmi2026");
         ap.ap.ssid_len = (uint8_t)strlen((const char *)ap.ap.ssid);
         ap.ap.max_connection = 4;
         ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
@@ -296,7 +294,7 @@ void edgehmi_cloud_mqtt_publish_alarm(const edgehmi_alarm_event_t *evt) {
         return;
     }
     char topic[96];
-    char payload[256];
+    char payload[320];
     char esc_msg[140];
     edgehmi_json_escape(evt->message, esc_msg, sizeof(esc_msg));
     snprintf(topic, sizeof(topic), "%s/%s/alarm",

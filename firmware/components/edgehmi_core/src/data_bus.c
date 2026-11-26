@@ -15,7 +15,7 @@ static void bus_unlock(edgehmi_bus_t *bus) {
     }
 }
 
-static void copy_str(char *dst, size_t cap, const char *src) {
+void edgehmi_copy_str(char *dst, size_t cap, const char *src) {
     if (!dst || cap == 0) {
         return;
     }
@@ -29,6 +29,10 @@ static void copy_str(char *dst, size_t cap, const char *src) {
     }
     memcpy(dst, src, len);
     dst[len] = '\0';
+}
+
+static void copy_str(char *dst, size_t cap, const char *src) {
+    edgehmi_copy_str(dst, cap, src);
 }
 
 void edgehmi_bus_init(edgehmi_bus_t *bus,

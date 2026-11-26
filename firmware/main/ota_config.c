@@ -126,7 +126,7 @@ static bool check_bearer_auth(httpd_req_t *req) {
     char token[64] = {0};
     if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
     if (s_active_cfg && s_active_cfg->api_token[0] != '\0') {
-        strncpy(token, s_active_cfg->api_token, sizeof(token) - 1);
+        edgehmi_copy_str(token, sizeof(token), s_active_cfg->api_token);
     }
     if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
 

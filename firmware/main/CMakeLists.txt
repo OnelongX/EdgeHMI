@@ -13,6 +13,7 @@ idf_component_register(
     REQUIRES
         edgehmi_core
         edgehmi_bsp
+        json
         driver
         esp_adc
         esp_event

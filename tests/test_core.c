@@ -9,6 +9,7 @@
 #include "ota_package.h"
 #include "rule_engine.h"
 
+#undef NDEBUG
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

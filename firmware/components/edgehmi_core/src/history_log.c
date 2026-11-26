@@ -14,7 +14,7 @@ void edgehmi_history_init(edgehmi_history_t *hist, const edgehmi_bus_t *bus) {
     }
     for (size_t i = 0; i < bus->count && hist->tag_count < EDGEHMI_MAX_HISTORY_TAGS; ++i) {
         if ((bus->tags[i].access & TAG_ACCESS_R) != 0) {
-            strncpy(hist->tag_names[hist->tag_count], bus->tags[i].name, EDGEHMI_MAX_NAME_LEN - 1);
+            edgehmi_copy_str(hist->tag_names[hist->tag_count], EDGEHMI_MAX_NAME_LEN, bus->tags[i].name);
             hist->tag_indices[hist->tag_count] = (int16_t)i;
             hist->tag_count++;
         }
@@ -49,8 +49,8 @@ uint32_t edgehmi_history_record_alarm(edgehmi_history_t *hist, const edgehmi_ala
     rec->level = evt->level;
     rec->active = evt->active;
     rec->acknowledged = false;
-    strncpy(rec->rule_id, evt->rule_id, sizeof(rec->rule_id) - 1);
-    strncpy(rec->message, evt->message, sizeof(rec->message) - 1);
+    edgehmi_copy_str(rec->rule_id, sizeof(rec->rule_id), evt->rule_id);
+    edgehmi_copy_str(rec->message, sizeof(rec->message), evt->message);
 
     hist->alarm_head = (hist->alarm_head + 1u) % EDGEHMI_MAX_ALARMS;
     if (hist->alarm_count < EDGEHMI_MAX_ALARMS) {

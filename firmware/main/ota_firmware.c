@@ -24,7 +24,7 @@ static bool verify_bearer(httpd_req_t *req) {
     char token[64] = {0};
     if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
     if (s_cfg && s_cfg->api_token[0] != '\0') {
-        strncpy(token, s_cfg->api_token, sizeof(token) - 1);
+        edgehmi_copy_str(token, sizeof(token), s_cfg->api_token);
     }
     if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
 
@@ -211,8 +211,12 @@ edgehmi_err_t edgehmi_ota_apply_offline_epk(const char *epk_path,
         fclose(f);
         return EDGEHMI_ERR_IO;
     }
-    fread(buf, 1, (size_t)sz, f);
+    size_t nread = fread(buf, 1, (size_t)sz, f);
     fclose(f);
+    if (nread != (size_t)sz) {
+        free(buf);
+        return EDGEHMI_ERR_IO;
+    }
 
     edgehmi_epk_header_t hdr;
     const uint8_t *payload = NULL;

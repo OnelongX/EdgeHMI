@@ -390,7 +390,7 @@ edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg,
     for (size_t p = 0; p < cfg->page_count; ++p) {
         const edgehmi_page_t *pg = &cfg->pages[p];
         ui_page_runtime_t *rt = &s_pages[p];
-        strncpy(rt->id, pg->id, sizeof(rt->id) - 1);
+        edgehmi_copy_str(rt->id, sizeof(rt->id), pg->id);
 
         lv_obj_t *scr = lv_obj_create(NULL);
         lv_obj_set_style_bg_color(scr, lv_color_hex(bg_hex), LV_PART_MAIN);

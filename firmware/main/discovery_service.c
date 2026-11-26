@@ -62,16 +62,16 @@ static void udp_discovery_task(void *arg) {
         if (len > 0 && edgehmi_discovery_is_probe(rx, (size_t)len)) {
             edgehmi_device_info_t info;
             memset(&info, 0, sizeof(info));
-            strncpy(info.device_id, s_ctx.device_id, sizeof(info.device_id) - 1);
-            strncpy(info.fw_version, EDGEHMI_FW_VERSION, sizeof(info.fw_version) - 1);
+            edgehmi_copy_str(info.device_id, sizeof(info.device_id), s_ctx.device_id);
+            edgehmi_copy_str(info.fw_version, sizeof(info.fw_version), EDGEHMI_FW_VERSION);
             info.http_port = s_ctx.http_port;
             info.uptime_s = (uint32_t)(esp_timer_get_time() / 1000000LL);
 
             if (s_ctx.cfg_mutex) xSemaphoreTake(s_ctx.cfg_mutex, portMAX_DELAY);
-            strncpy(info.name, (s_ctx.cfg && s_ctx.cfg->device_name[0]) ? s_ctx.cfg->device_name : "EdgeHMI",
-                    sizeof(info.name) - 1);
-            strncpy(info.cfg_version, (s_ctx.cfg && s_ctx.cfg->version[0]) ? s_ctx.cfg->version : "0.0.0",
-                    sizeof(info.cfg_version) - 1);
+            edgehmi_copy_str(info.name, sizeof(info.name),
+                             (s_ctx.cfg && s_ctx.cfg->device_name[0]) ? s_ctx.cfg->device_name : "EdgeHMI");
+            edgehmi_copy_str(info.cfg_version, sizeof(info.cfg_version),
+                             (s_ctx.cfg && s_ctx.cfg->version[0]) ? s_ctx.cfg->version : "0.0.0");
             info.width = (s_ctx.cfg && s_ctx.cfg->width > 0) ? s_ctx.cfg->width : 800;
             info.height = (s_ctx.cfg && s_ctx.cfg->height > 0) ? s_ctx.cfg->height : 480;
 

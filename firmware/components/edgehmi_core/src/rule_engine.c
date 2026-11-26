@@ -107,9 +107,9 @@ static void emit_alarm(edgehmi_rule_engine_t *eng,
     }
     edgehmi_alarm_event_t evt;
     memset(&evt, 0, sizeof(evt));
-    strncpy(evt.rule_id, r->id, sizeof(evt.rule_id) - 1);
+    edgehmi_copy_str(evt.rule_id, sizeof(evt.rule_id), r->id);
     evt.level = r->alarm_level;
-    strncpy(evt.message, r->alarm_msg, sizeof(evt.message) - 1);
+    edgehmi_copy_str(evt.message, sizeof(evt.message), r->alarm_msg);
     evt.timestamp_ms = now_ms;
     evt.active = active;
     eng->alarm_cb(&evt, eng->alarm_ctx);

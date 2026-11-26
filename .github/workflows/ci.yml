@@ -20,12 +20,13 @@ jobs:
 
       - name: Compile & Run Pure C11 Core Unit Tests (-Wall -Wextra -Werror)
         run: |
+          gcc -std=c11 -O2 -c firmware/components/edgehmi_core/third_party/cjson/cJSON.c \
+            -Ifirmware/components/edgehmi_core/third_party/cjson -o tests/cJSON.o
           gcc -std=c11 -Wall -Wextra -Werror -O2 \
             -Ifirmware/components/edgehmi_core/include \
             -Ifirmware/components/edgehmi_core/third_party/cjson \
             firmware/components/edgehmi_core/src/*.c \
-            firmware/components/edgehmi_core/third_party/cjson/cJSON.c \
-            tests/test_core.c -lm -o tests/test_core
+            tests/cJSON.o tests/test_core.c -lm -o tests/test_core
           ./tests/test_core
 
       - name: Validate Industrial Config Templates & Font Subsetter
@@ -58,6 +59,7 @@ jobs:
 
       - name: Configure & Build ESP32-S3 Firmware
         run: |
+          . /opt/esp/idf/export.sh
           cd firmware
           echo "${{ matrix.kconfig }}" > sdkconfig.ci.board
           idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.board" set-target esp32s3
