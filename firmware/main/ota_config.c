@@ -15,6 +15,7 @@ static const char *TAG = "edgehmi_ota";
 static edgehmi_bus_t *s_bus = NULL;
 static const edgehmi_config_t *s_active_cfg = NULL;
 static const edgehmi_mb_stats_t *s_mb_stats = NULL;
+static edgehmi_history_t *s_history = NULL;
 static SemaphoreHandle_t s_cfg_mutex = NULL;
 static edgehmi_reload_cb s_reload_cb = NULL;
 
@@ -247,33 +248,97 @@ static esp_err_t handle_post_config(httpd_req_t *req) {
     return httpd_resp_sendstr(req, "{\"ok\":true,\"status\":\"reloaded\"}");
 }
 
+static esp_err_t handle_history_csv(httpd_req_t *req) {
+    if (!s_history) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "history not ready");
+    }
+    char *buf = (char *)edgehmi_alloc_buf(32768);
+    if (!buf) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+    edgehmi_history_export_csv(s_history, buf, 32768);
+    if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"edgehmi_history.csv\"");
+    esp_err_t rc = httpd_resp_sendstr(req, buf);
+    free(buf);
+    return rc;
+}
+
+static esp_err_t handle_get_alarms(httpd_req_t *req) {
+    if (!s_history) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "history not ready");
+    }
+    char *buf = (char *)edgehmi_alloc_buf(8192);
+    if (!buf) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+    edgehmi_history_export_alarms_json(s_history, buf, 8192);
+    if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t rc = httpd_resp_sendstr(req, buf);
+    free(buf);
+    return rc;
+}
+
+static esp_err_t handle_ack_alarms(httpd_req_t *req) {
+    if (!check_bearer_auth(req)) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"unauthorized\"}");
+    }
+    size_t acked = 0;
+    if (s_history) {
+        if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+        acked = edgehmi_history_ack_alarm(s_history, 0);
+        if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+    }
+    char resp[96];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"acked\":%u}", (unsigned)acked);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, resp);
+}
+
 edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
                                  const edgehmi_config_t *active_cfg,
                                  const edgehmi_mb_stats_t *mb_stats,
+                                 edgehmi_history_t *history,
                                  SemaphoreHandle_t cfg_mutex,
                                  edgehmi_reload_cb reload_cb) {
     s_bus = bus;
     s_active_cfg = active_cfg;
     s_mb_stats = mb_stats;
+    s_history = history;
     s_cfg_mutex = cfg_mutex;
     s_reload_cb = reload_cb;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0; /* Pin HTTP/OTA management server to Core 0 */
+    config.max_uri_handlers = 12;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
         return EDGEHMI_ERR_IO;
     }
 
-    httpd_uri_t u_health = { .uri = "/api/health", .method = HTTP_GET, .handler = handle_health };
-    httpd_uri_t u_tags   = { .uri = "/api/tags",   .method = HTTP_GET, .handler = handle_get_tags };
-    httpd_uri_t u_cfg    = { .uri = "/api/config", .method = HTTP_POST, .handler = handle_post_config };
+    httpd_uri_t u_health = { .uri = "/api/health",      .method = HTTP_GET,  .handler = handle_health };
+    httpd_uri_t u_tags   = { .uri = "/api/tags",        .method = HTTP_GET,  .handler = handle_get_tags };
+    httpd_uri_t u_cfg    = { .uri = "/api/config",      .method = HTTP_POST, .handler = handle_post_config };
+    httpd_uri_t u_hist   = { .uri = "/api/history.csv", .method = HTTP_GET,  .handler = handle_history_csv };
+    httpd_uri_t u_alarms = { .uri = "/api/alarms",      .method = HTTP_GET,  .handler = handle_get_alarms };
+    httpd_uri_t u_ack    = { .uri = "/api/alarms/ack",  .method = HTTP_POST, .handler = handle_ack_alarms };
 
     httpd_register_uri_handler(server, &u_health);
     httpd_register_uri_handler(server, &u_tags);
     httpd_register_uri_handler(server, &u_cfg);
+    httpd_register_uri_handler(server, &u_hist);
+    httpd_register_uri_handler(server, &u_alarms);
+    httpd_register_uri_handler(server, &u_ack);
     edgehmi_ota_register_handlers(server, active_cfg, cfg_mutex);
 
-    ESP_LOGI(TAG, "Config + Firmware OTA HTTP server started on Core 0 (port %d)", config.server_port);
+    ESP_LOGI(TAG, "Config + Firmware OTA + Historian HTTP server started on Core 0 (port %d)", config.server_port);
     return EDGEHMI_OK;
 }

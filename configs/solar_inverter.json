@@ -28,6 +28,16 @@
       { "tag": "inv_enable",    "slave": 1, "fc": 1, "addr": 11,   "type": "bool", "scale": 1.0, "offset": 0, "unit": "",   "rw": "rw", "default": 1 }
     ]
   },
+  "can_bus": {
+    "enabled": true,
+    "bitrate": 500000,
+    "tx_pin": 20,
+    "rx_pin": 19,
+    "signals": [
+      { "tag": "bms_pack_v",    "can_id": 854, "start_bit": 0,  "bit_len": 16, "signed": false, "scale": 0.01, "offset": 0, "unit": "V", "default": 52.8 },
+      { "tag": "bms_pack_curr", "can_id": 854, "start_bit": 16, "bit_len": 16, "signed": true,  "scale": 0.1,  "offset": 0, "unit": "A", "default": 14.2 }
+    ]
+  },
   "rules": [
     {
       "id": "rule_anti_backflow",
@@ -80,7 +90,7 @@
         { "id": "val_grid",    "type": "value",  "x": 236, "y": 150, "w": 140, "h": 36, "bind": "grid_power_w", "unit": "W", "decimals": 0, "color": "#38BDF8" },
         { "id": "lbl_lim",     "type": "label",  "x": 236, "y": 205, "w": 140, "h": 24, "text": "Power Limit" },
         { "id": "val_lim",     "type": "value",  "x": 236, "y": 233, "w": 140, "h": 36, "bind": "power_limit", "unit": "%", "decimals": 0, "color": "#2DD4BF" },
-        { "id": "bar_lim",     "type": "bar",    "x": 48,  "y": 320, "w": 322, "h": 22, "bind": "power_limit", "min": 0, "max": 100, "color": "#F59E0B" },
+        { "id": "sld_lim",     "type": "slider", "x": 48,  "y": 318, "w": 322, "h": 28, "bind": "power_limit", "min": 0, "max": 100, "step": 5, "color": "#F59E0B" },
 
         { "id": "card_bess",   "type": "card",   "x": 414, "y": 64,  "w": 362, "h": 310, "text": "BATTERY BMS & THERMAL" },
         { "id": "lbl_soc",     "type": "label",  "x": 438, "y": 104, "w": 150, "h": 22, "text": "Battery SOC" },

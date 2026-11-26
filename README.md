@@ -26,10 +26,12 @@
 | :--- | :--- | :--- |
 | **实时底座** | **纯 ANSI C11 定长静态池**（`data_bus` / `modbus_rtu` / `rule_engine` / `config_loader`），零运行时堆碎片、零 GC 停顿 | 无虚拟机内存开销与 GC 抖动，扫描周期严格可预测 |
 | **双核隔离** | **Core 0** 承载 Wi-Fi / HTTP / OTA / mDNS & UDP 发现；**Core 1** 独占 RS485 轮询、安全联锁、TWDT 看门狗与 LVGL 9 渲染 | 网络抖动或 HTTP 并发请求绝不阻塞现场总线与急停逻辑 |
-| **Modbus 引擎** | **连续寄存器自动合并块读（Block Read）**，完整支持 `ABCD / CDAB / BADC / DCBA` 4 种 32 位字节序与 `FC01/02/03/04/05/06/16` | 轮询吞吐提升 **2.5x–4x**，直连国产电表、逆变器与变频器 |
-| **确定性联锁** | 支持单条件 / 复合 `AND` & `OR` / **RS485 断线 Fail-Safe**、滞环（Hysteresis）、去抖（Debounce）与**持续强制锁定（`enforce`）** | 故障未解除期间人工误合闸会被下一扫描周期立即重新拉停 |
-| **无代码组态** | 内置零依赖 **PC Studio 仿真工作台**，支持 800×480 拖拽排版、**可视化属性面板（Inspector）**、一键增删控件与故障注入 | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，无需反复烧录固件 |
-| **双模 OTA & 发现** | 支持 **配置级原子热更新**（`staging → backup → active` + Boot-OK 崩退回滚）与 **固件级 A/B 分区 OTA**（Push / Pull / 离线 `.epk`） | 局域网 UDP 56888 + mDNS 自动发现设备，支持批量下发与 SHA-256 防篡改 |
+| **多协议与本地 IO** | **Modbus RTU 块读（4 种字节序）+ Modbus TCP + 原生 CAN 2.0B (TWAI) + 板载 GPIO/ADC/PWM** 统一汇聚到同一套 `data_bus` | 轮询吞吐提升 **3x**，直连 PLC、电表、锂电 BMS 与物理急停按钮 |
+| **开箱即用 BSP** | 内置 `edgehmi_bsp`（`menuconfig` 一键选板：**Waveshare 4.3" / Sunton 8048S043 / 8048S070**，PSRAM 防撕裂双缓冲 + GT911 + 背光 PWM） | 无需手写 RGB 时序，刷机即亮屏 |
+| **确定性联锁** | 支持单条件 / 复合 `AND` & `OR` / **RS485 断线 Fail-Safe**、滞环、去抖与**持续强制锁定（`enforce`）** | 故障未解除期间人工误合闸会被下一扫描周期立即重新拉停 |
+| **全栈无代码 IDE** | **Studio v2.0 六标签工控工作台**：14 种控件（含 `slider/spinbox/alarm_list/qrcode/image`）、Undo/Redo、**可视化点表与规则表单**、真机实时镜像、WebSerial 串口监控 | 一份 `config.json` 跨 PC 与 ESP32-S3 无缝运行，无需手写 JSON |
+| **云边协同 & 历史** | **Core 0 MQTT 遥测与断网环形缓存补传**、SoftAP/4G Cat.1 接入、本地历史采样（`GET /api/history.csv`）、告警确认（`POST /api/alarms/ack`） | 兼顾离线本地自治、甲方 CSV 报表导出与远程运维 |
+| **中文子集 & OTA** | `tools/build_font.py` 自动扫描组态汉字裁剪 LVGL 9 字库（~21KB）；双模 OTA（配置原子热推 + 固件 Push/Pull/离线 `.epk`）+ UDP 56888 发现 | 极小 Flash 占用解决真机中文显示，支持局域网批量部署与崩退回滚 |
 
 ---
 
@@ -81,28 +83,34 @@ esp32-ind-hmi/
 │   ├── partitions.csv                 # 双 OTA (ota_0/ota_1) + LittleFS + NVS 分区表
 │   ├── sdkconfig.defaults             # 开发默认配置（PSRAM / TWDT / LVGL）
 │   ├── sdkconfig.defaults.prod        # 量产安全强化（Secure Boot v2 + Flash/NVS 加密）
-│   ├── components/edgehmi_core/       # 纯 C11 核心库（可脱离 ESP-IDF 宿主机独立编译测试）
-│   │   ├── include/ & src/            # data_bus / modbus_rtu / rule_engine / config_loader / ota_package / discovery_proto
-│   │   └── third_party/cjson/         # 内置 MIT 官方 cJSON
+│   ├── components/
+│   │   ├── edgehmi_core/              # 纯 C11 核心库（可脱离 ESP-IDF 宿主机独立编译测试）
+│   │   │   ├── include/ & src/        # data_bus / modbus_rtu / modbus_tcp / can_codec / history_log / rule_engine / config_loader / ota_package / discovery_proto
+│   │   │   └── third_party/cjson/     # 内置 MIT 官方 cJSON
+│   │   └── edgehmi_bsp/               # 开箱即用 ESP32-S3 屏 BSP（Waveshare 4.3" / Sunton 8048S043 / 8048S070 + Kconfig）
 │   └── main/                          # ESP32-S3 驱动与任务集成
 │       ├── main.c                     # Core 1 控制/UI 调度、UART 热重配、NVS 保持、TWDT
-│       ├── ui_engine_lvgl.c           # LVGL 9 声明式 UI、每控件版本增量同步、安全切屏与 PIN 弹窗
-│       ├── ota_config.c               # HTTP 配置热更新、LittleFS 原子切换、Boot-OK 崩退回滚
+│       ├── ui_engine_lvgl.c           # LVGL 9 声明式 UI（14 种工业控件）、版本增量同步与 PIN 弹窗
+│       ├── local_io.c                 # ESP32-S3 原生 GPIO DI/DO + ADC1 + LEDC PWM 测点同步
+│       ├── fieldbus_ext.c             # Modbus TCP 客户端 + 原生 TWAI CAN 2.0B 接收解析
+│       ├── cloud_mqtt.c               # Core 0 MQTT 遥测、断网环形缓存补传、Wi-Fi/SoftAP/4G 钩子
+│       ├── ota_config.c               # HTTP 配置热更新、LittleFS 原子切换、历史 CSV & 告警 Ack API
 │       ├── ota_firmware.c             # Push/Pull 固件 OTA + SD/USB 离线 .epk 升级
 │       └── discovery_service.c        # mDNS (_edgehmi._tcp) + UDP 56888 广播应答
 ├── schema/config.schema.json          # JSON Schema 强约束规范
-├── studio/                            # 零依赖 Python + 原生 HTML5 拖拽仿真工作台
-│   ├── server.py                      # 实时仿真内核、安全脱敏 API、SSRF 防护与 UDP 发现
-│   └── web/index.html                 # 800×480 画布、Design Mode、Inspector 与故障注入台
+├── studio/                            # 零依赖 Python + 原生 HTML5 全栈工控 IDE
+│   ├── server.py                      # 实时仿真、脱敏 API、历史 CSV、告警 Ack、真机镜像代理与 SSRF 防护
+│   └── web/index.html                 # 800×480 画布、14 控件渲染、6 标签 IDE（Inspector/点表/规则/镜像/WebSerial）
 ├── tools/                             # 工程化 CLI 工具链
-│   ├── validate_config.py             # Schema、越界、Modbus 块读与 NVS 冲突校验
+│   ├── validate_config.py             # Schema、越界、Modbus 块读、IO/CAN 与 NVS 冲突校验
+│   ├── build_font.py                  # 自动扫描 config.json 汉字生成 LVGL 9 极简中文子集字库命令
 │   ├── discover_devices.py            # 局域网 UDP 56888 设备扫描
 │   ├── push_config.py                 # 校验并 Bearer 鉴权热推配置
 │   ├── pack_epk.py                    # EPK1 (SHA-256 + CRC32) 离线/OTA 升级包构建与验签
 │   └── ota_push.py                    # 远程固件流式推送
 └── tests/
-    ├── test_core.c                    # 纯 C11 核心 8 组单元测试
-    └── test_studio_e2e.py             # Studio + OTA + 发现 + 安全防护全链路 E2E 测试
+    ├── test_core.c                    # 纯 C11 核心 9 组单元测试（含 Modbus TCP / CAN / History CSV）
+    └── test_studio_e2e.py             # Studio v2.0 + OTA + 发现 + 安全 + 历史 + 镜像全链路 E2E 测试
 ```
 
 </details>
@@ -144,7 +152,7 @@ idf.py build flash monitor
 idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.prod" build
 ```
 
-> **中文字库提示**：[ui_engine_lvgl.c](firmware/main/ui_engine_lvgl.c) 已预留 `EDGEHMI_CUSTOM_FONT` 编译期宏，接入思源黑体常用汉字子集（如 `LV_FONT_DECLARE(font_noto_sc_16)`）即可自动在整屏控件树继承中文渲染。
+> **中文子集字库自动裁剪**：运行 `python tools/build_font.py configs/pump_station.json configs/solar_inverter.json`，工具会自动提取配置及工业词表中的全部汉字（约 259 字 / ~21 KB Flash）并输出一键 `lv_font_conv` 命令，再开启 `EDGEHMI_CUSTOM_FONT=font_edgehmi_cjk` 即可全屏渲染清晰中文。
 
 ---
 

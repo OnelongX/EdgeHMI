@@ -49,8 +49,11 @@ class IndustrialRuntime:
         self.stats: dict[str, Any] = {}
         self.tags: dict[str, dict[str, Any]] = {}
         self.history: dict[str, deque[float]] = {}
+        self.csv_history: deque[dict[str, Any]] = deque(maxlen=500)
+        self.last_csv_ts: float = 0.0
         self.rule_state: dict[str, dict[str, Any]] = {}
         self.alarms: deque[dict[str, Any]] = deque(maxlen=40)
+        self.next_alarm_id: int = 1
         self.fault_overrides: dict[str, tuple[float, float]] = {}
         self.comm_loss: bool = False
         self.fw_version: str = "1.1.0"
@@ -81,6 +84,35 @@ class IndustrialRuntime:
         except Exception:
             pass
 
+    def _add_alarm(self, rule: str, level: str, message: str) -> None:
+        self.alarms.appendleft({
+            "id": self.next_alarm_id,
+            "ts": time.strftime("%H:%M:%S"),
+            "rule": rule,
+            "level": level,
+            "ack": False,
+            "message": message,
+        })
+        self.next_alarm_id += 1
+
+    def ack_alarms(self, alarm_id: int = 0) -> int:
+        with self.lock:
+            acked = 0
+            for a in self.alarms:
+                if (alarm_id == 0 or a.get("id") == alarm_id) and not a.get("ack"):
+                    a["ack"] = True
+                    acked += 1
+            return acked
+
+    def export_history_csv(self) -> str:
+        with self.lock:
+            cols = [k for k, v in self.tags.items() if "r" in str(v.get("rw", "r"))][:8]
+            lines = ["timestamp_ms," + ",".join(cols)]
+            for row in self.csv_history:
+                vals = [f"{float(row.get(c, 0.0)):.2f}" for c in cols]
+                lines.append(f"{row['ts_ms']}," + ",".join(vals))
+            return "\n".join(lines) + "\n"
+
     def clear_nvs(self) -> None:
         with self.lock:
             self.nvs_store.clear()
@@ -93,12 +125,7 @@ class IndustrialRuntime:
                 tname = pt["tag"]
                 if pt.get("retentive") and tname in self.tags:
                     self.tags[tname]["value"] = float(pt.get("default", 0.0))
-            self.alarms.appendleft({
-                "ts": time.strftime("%H:%M:%S"),
-                "rule": "nvs",
-                "level": "info",
-                "message": "Retentive NVS cleared — restored factory defaults",
-            })
+            self._add_alarm("nvs", "info", "Retentive NVS cleared — restored factory defaults")
 
     def load_config_json(self, raw_json: str, template_name: str | None = None) -> tuple[bool, str]:
         try:
@@ -126,6 +153,8 @@ class IndustrialRuntime:
                 self.active_template = template_name
             self.tags.clear()
             self.history.clear()
+            self.csv_history.clear()
+            self.last_csv_ts = 0.0
             self.rule_state.clear()
             self.fault_overrides.clear()
             self.comm_loss = False
@@ -138,10 +167,43 @@ class IndustrialRuntime:
                 val = float(self.nvs_store[tname]) if (retentive and tname in self.nvs_store) else float(pt.get("default", 0.0))
                 self.tags[tname] = {
                     "name": tname,
+                    "source": "modbus",
                     "value": val,
                     "unit": pt.get("unit", ""),
                     "rw": pt.get("rw", "r"),
                     "retentive": retentive,
+                    "quality": 1,
+                    "updated_ms": now_ms,
+                }
+                self.history[tname] = deque([val] * 24, maxlen=24)
+
+            for io in cfg.get("local_io", []):
+                tname = io["tag"]
+                mode = io.get("mode", "di")
+                retentive = bool(io.get("retentive", False))
+                val = float(self.nvs_store[tname]) if (retentive and tname in self.nvs_store) else float(io.get("default", 0.0))
+                self.tags[tname] = {
+                    "name": tname,
+                    "source": f"gpio:{io.get('pin')}",
+                    "value": val,
+                    "unit": io.get("unit", ""),
+                    "rw": "rw" if mode in ("do", "pwm") else "r",
+                    "retentive": retentive,
+                    "quality": 1,
+                    "updated_ms": now_ms,
+                }
+                self.history[tname] = deque([val] * 24, maxlen=24)
+
+            for sig in cfg.get("can_bus", {}).get("signals", []):
+                tname = sig["tag"]
+                val = float(sig.get("default", 0.0))
+                self.tags[tname] = {
+                    "name": tname,
+                    "source": f"can:0x{int(sig.get('can_id', 0)):X}",
+                    "value": val,
+                    "unit": sig.get("unit", ""),
+                    "rw": "r",
+                    "retentive": False,
                     "quality": 1,
                     "updated_ms": now_ms,
                 }
@@ -183,12 +245,7 @@ class IndustrialRuntime:
             if not force and self._widget_requires_pin(widget_id):
                 expected_pin = str(self.config.get("device", {}).get("engineer_pin", "1234"))
                 if not hmac.compare_digest(str(pin or ""), expected_pin):
-                    self.alarms.appendleft({
-                        "ts": time.strftime("%H:%M:%S"),
-                        "rule": "auth",
-                        "level": "warn",
-                        "message": f"Rejected protected write to {tag}: invalid Engineer PIN",
-                    })
+                    self._add_alarm("auth", "warn", f"Rejected protected write to {tag}: invalid Engineer PIN")
                     return 403, False, "Invalid Engineer PIN"
 
             self.tags[tag]["value"] = float(value)
@@ -197,12 +254,7 @@ class IndustrialRuntime:
             if not force and self.tags[tag].get("retentive"):
                 self.nvs_store[tag] = float(value)
                 self._save_nvs()
-                self.alarms.appendleft({
-                    "ts": time.strftime("%H:%M:%S"),
-                    "rule": "nvs",
-                    "level": "info",
-                    "message": f"NVS persisted: {tag} = {value}",
-                })
+                self._add_alarm("nvs", "info", f"NVS persisted: {tag} = {value}")
 
             if force:
                 self.fault_overrides[tag] = (float(value), time.time() + 4.0)
@@ -212,14 +264,13 @@ class IndustrialRuntime:
         with self.lock:
             self.comm_loss = bool(active)
             for tdata in self.tags.values():
-                if tdata["rw"] == "r":
+                if tdata["rw"] == "r" and tdata.get("source", "modbus") == "modbus":
                     tdata["quality"] = 3 if self.comm_loss else 1
-            self.alarms.appendleft({
-                "ts": time.strftime("%H:%M:%S"),
-                "rule": "rs485",
-                "level": "critical" if self.comm_loss else "info",
-                "message": "Simulated RS485 Bus Disconnect (STALE)" if self.comm_loss else "RS485 Bus Communication Restored",
-            })
+            self._add_alarm(
+                "rs485",
+                "critical" if self.comm_loss else "info",
+                "Simulated RS485 Bus Disconnect (STALE)" if self.comm_loss else "RS485 Bus Communication Restored",
+            )
 
     def check_bearer_auth(self, auth_header: str | None) -> bool:
         with self.lock:
@@ -251,12 +302,11 @@ class IndustrialRuntime:
 
         with self.lock:
             self.fw_version = new_ver or self.fw_version
-            self.alarms.appendleft({
-                "ts": time.strftime("%H:%M:%S"),
-                "rule": "ota",
-                "level": "info",
-                "message": f"Firmware OTA verified ({len(payload)}B, sha256={actual_sha[:10]}..., v{self.fw_version})",
-            })
+            self._add_alarm(
+                "ota",
+                "info",
+                f"Firmware OTA verified ({len(payload)}B, sha256={actual_sha[:10]}..., v{self.fw_version})",
+            )
         return 200, True, f"ota_verified_v{self.fw_version}"
 
     def discovery_announce_dict(self) -> dict[str, Any]:
@@ -372,12 +422,24 @@ class IndustrialRuntime:
                     self.tags[k]["value"] = fval
 
             for tname, tdata in self.tags.items():
-                if not self.comm_loss or tdata["rw"] != "r":
+                if not self.comm_loss or tdata["rw"] != "r" or tdata.get("source", "modbus") != "modbus":
                     tdata["quality"] = 1
                     tdata["updated_ms"] = now_ms
                 else:
                     tdata["quality"] = 3
                 self.history[tname].append(round(tdata["value"], 2))
+
+            if "bms_pack_v" in self.tags:
+                self.tags["bms_pack_v"]["value"] = round(52.8 + 0.15 * math.sin(now / 5.0), 2)
+            if "bms_pack_curr" in self.tags:
+                self.tags["bms_pack_curr"]["value"] = round(14.2 + random.uniform(-0.3, 0.3), 2)
+
+            if now - self.last_csv_ts >= 1.0:
+                row: dict[str, Any] = {"ts_ms": now_ms}
+                for tn, td in self.tags.items():
+                    row[tn] = td["value"]
+                self.csv_history.append(row)
+                self.last_csv_ts = now
 
             for r in self.config.get("rules", []):
                 if not r.get("enabled", True):
@@ -413,19 +475,9 @@ class IndustrialRuntime:
                                     if self.tags[tt].get("retentive"):
                                         self.nvs_store[tt] = float(then["value"])
                                         self._save_nvs()
-                                self.alarms.appendleft({
-                                    "ts": time.strftime("%H:%M:%S"),
-                                    "rule": rid,
-                                    "level": "info",
-                                    "message": f"Interlock: {tt} -> {then['value']} ({r.get('desc', rid)})",
-                                })
+                                self._add_alarm(rid, "info", f"Interlock: {tt} -> {then['value']} ({r.get('desc', rid)})")
                             elif then["action"] == "alarm":
-                                self.alarms.appendleft({
-                                    "ts": time.strftime("%H:%M:%S"),
-                                    "rule": rid,
-                                    "level": then.get("level", "warn"),
-                                    "message": then.get("message", rid),
-                                })
+                                self._add_alarm(rid, then.get("level", "warn"), then.get("message", rid))
                     elif r.get("enforce") or r.get("then", {}).get("enforce"):
                         then = r["then"]
                         if then["action"] == "set_tag":
@@ -434,12 +486,7 @@ class IndustrialRuntime:
                             if tt in self.tags and abs(self.tags[tt]["value"] - target_val) > 1e-6:
                                 self.tags[tt]["value"] = target_val
                                 st["triggers"] += 1
-                                self.alarms.appendleft({
-                                    "ts": time.strftime("%H:%M:%S"),
-                                    "rule": rid,
-                                    "level": "warn",
-                                    "message": f"Enforced interlock: {tt} -> {target_val} ({r.get('desc', rid)})",
-                                })
+                                self._add_alarm(rid, "warn", f"Enforced interlock: {tt} -> {target_val} ({r.get('desc', rid)})")
                 else:
                     st["pending"] = False
                     st["active"] = False
@@ -472,6 +519,23 @@ class IndustrialRuntime:
             }
 
 
+def validate_lan_target_url(target_url: str) -> tuple[bool, str]:
+    parsed = urllib.parse.urlparse(target_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False, "invalid target_url (http/https required)"
+    host = parsed.hostname.lower()
+    allowed_host = host in ("localhost",) or host.endswith(".local")
+    if not allowed_host:
+        try:
+            ip = ipaddress.ip_address(host)
+            allowed_host = ip.is_private or ip.is_loopback or ip.is_link_local
+        except ValueError:
+            allowed_host = False
+    if not allowed_host:
+        return False, f"blocked non-LAN target host: {host}"
+    return True, "ok"
+
+
 def make_handler(runtime: IndustrialRuntime):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -501,6 +565,17 @@ def make_handler(runtime: IndustrialRuntime):
             elif self.path == "/api/tags":
                 snap = runtime.snapshot()
                 self._send_json(200, {"tags": list(snap["tags"].values())})
+            elif self.path == "/api/alarms":
+                snap = runtime.snapshot()
+                self._send_json(200, {"alarms": snap["alarms"]})
+            elif self.path == "/api/history.csv":
+                csv_bytes = runtime.export_history_csv().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="edgehmi_history.csv"')
+                self.send_header("Content-Length", str(len(csv_bytes)))
+                self.end_headers()
+                self.wfile.write(csv_bytes)
             elif self.path == "/api/state":
                 self._send_json(200, runtime.snapshot())
             else:
@@ -537,21 +612,9 @@ def make_handler(runtime: IndustrialRuntime):
                 try:
                     data = json.loads(raw)
                     target_url = str(data["target_url"]).rstrip("/")
-                    parsed = urllib.parse.urlparse(target_url)
-                    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-                        self._send_json(400, {"ok": False, "message": "invalid target_url (http/https required)"})
-                        return
-                    # Restrict SSRF to loopback / private LAN / .local mDNS device addresses
-                    host = parsed.hostname.lower()
-                    allowed_host = host in ("localhost",) or host.endswith(".local")
-                    if not allowed_host:
-                        try:
-                            ip = ipaddress.ip_address(host)
-                            allowed_host = ip.is_private or ip.is_loopback or ip.is_link_local
-                        except ValueError:
-                            allowed_host = False
-                    if not allowed_host:
-                        self._send_json(400, {"ok": False, "message": f"blocked non-LAN target host: {host}"})
+                    url_ok, url_err = validate_lan_target_url(target_url)
+                    if not url_ok:
+                        self._send_json(400, {"ok": False, "message": url_err})
                         return
 
                     full_cfg = runtime.raw_config_copy()
@@ -571,6 +634,32 @@ def make_handler(runtime: IndustrialRuntime):
                     self._send_json(e.code, {"ok": False, "message": e.read().decode("utf-8", errors="replace")})
                 except Exception as exc:
                     self._send_json(502, {"ok": False, "message": str(exc)})
+            elif self.path == "/api/fleet/mirror_tags":
+                if not runtime.check_bearer_auth(self.headers.get("Authorization")):
+                    self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
+                    return
+                try:
+                    data = json.loads(raw)
+                    target_url = str(data["target_url"]).rstrip("/")
+                    url_ok, url_err = validate_lan_target_url(target_url)
+                    if not url_ok:
+                        self._send_json(400, {"ok": False, "message": url_err})
+                        return
+                    with urllib.request.urlopen(f"{target_url}/api/tags", timeout=3) as resp:
+                        self._send_json(200, json.loads(resp.read().decode("utf-8")))
+                except Exception as exc:
+                    self._send_json(502, {"ok": False, "message": str(exc)})
+            elif self.path == "/api/alarms/ack":
+                if not runtime.check_bearer_auth(self.headers.get("Authorization")):
+                    self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
+                    return
+                try:
+                    data = json.loads(raw) if raw.strip() else {}
+                    aid = int(data.get("id", 0))
+                    acked = runtime.ack_alarms(aid)
+                    self._send_json(200, {"ok": True, "acked": acked})
+                except Exception as exc:
+                    self._send_json(400, {"ok": False, "message": str(exc)})
             elif self.path == "/api/comm_loss":
                 try:
                     data = json.loads(raw)

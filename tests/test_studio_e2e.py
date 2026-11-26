@@ -216,7 +216,26 @@ def main() -> int:
             code, still_401 = req_json("POST", "/api/config", json.dumps(red_st["config"]))
             assert code == 401
 
-            print("ALL FULL STUDIO + OTA + DISCOVERY + SECURITY E2E TESTS PASSED.")
+            # 8. History CSV export, Alarm Ack & Live Device Mirror Proxy (auth + SSRF + 200)
+            time.sleep(1.1)
+            with urllib.request.urlopen(BASE + "/api/history.csv", timeout=5) as csv_resp:
+                csv_text = csv_resp.read().decode("utf-8")
+                assert csv_resp.status == 200 and csv_text.startswith("timestamp_ms,"), f"Bad CSV: {csv_text[:80]}"
+                assert len(csv_text.strip().splitlines()) >= 2
+
+            code, ack_unauth = req_json("POST", "/api/alarms/ack", {"id": 0})
+            assert code == 401
+            code, ack_ok = req_json("POST", "/api/alarms/ack", {"id": 0}, token=TOKEN)
+            assert code == 200 and ack_ok["ok"]
+
+            code, mir_unauth = req_json("POST", "/api/fleet/mirror_tags", {"target_url": BASE})
+            assert code == 401
+            code, mir_ssrf = req_json("POST", "/api/fleet/mirror_tags", {"target_url": "http://example.com"}, token=TOKEN)
+            assert code == 400
+            code, mir_ok = req_json("POST", "/api/fleet/mirror_tags", {"target_url": BASE}, token=TOKEN)
+            assert code == 200 and isinstance(mir_ok.get("tags"), list) and len(mir_ok["tags"]) > 0
+
+            print("ALL FULL STUDIO v2.0 + OTA + DISCOVERY + SECURITY + HISTORIAN E2E TESTS PASSED.")
             return 0
         finally:
             proc.terminate()

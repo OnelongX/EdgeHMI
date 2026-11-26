@@ -35,6 +35,8 @@ typedef struct {
 
 static const edgehmi_config_t *s_cfg = NULL;
 static edgehmi_bus_t *s_bus = NULL;
+static edgehmi_history_t *s_hist = NULL;
+static uint32_t s_last_alarm_seq = 0;
 static ui_page_runtime_t s_pages[EDGEHMI_MAX_PAGES];
 static size_t s_page_count = 0;
 static size_t s_active_page = 0;
@@ -216,6 +218,42 @@ static void on_switch_change(lv_event_t *e) {
     edgehmi_bus_request_write(s_bus, w->bind_tag_idx, checked ? 1.0 : 0.0, now_ms());
 }
 
+static void on_slider_released(lv_event_t *e) {
+    const edgehmi_widget_t *w = (const edgehmi_widget_t *)lv_event_get_user_data(e);
+    lv_obj_t *sl = lv_event_get_target_obj(e);
+    if (!w || !s_bus || w->bind_tag_idx < 0) return;
+
+    int32_t v = lv_slider_get_value(sl);
+    edgehmi_bus_request_write(s_bus, w->bind_tag_idx, (double)v, now_ms());
+}
+
+static void on_spinbox_delta(const edgehmi_widget_t *w, double sign) {
+    if (!w || !s_bus || w->bind_tag_idx < 0) return;
+    double cur = 0.0;
+    edgehmi_bus_get(s_bus, w->bind_tag_idx, &cur, NULL);
+    double step = (w->step > 0.0) ? w->step : 1.0;
+    double nxt = cur + sign * step;
+    if (nxt < w->min_val) nxt = w->min_val;
+    if (nxt > w->max_val) nxt = w->max_val;
+    edgehmi_bus_request_write(s_bus, w->bind_tag_idx, nxt, now_ms());
+}
+
+static void on_spinbox_dec(lv_event_t *e) {
+    on_spinbox_delta((const edgehmi_widget_t *)lv_event_get_user_data(e), -1.0);
+}
+
+static void on_spinbox_inc(lv_event_t *e) {
+    on_spinbox_delta((const edgehmi_widget_t *)lv_event_get_user_data(e), 1.0);
+}
+
+static void on_alarm_ack_all(lv_event_t *e) {
+    (void)e;
+    if (s_hist) {
+        edgehmi_history_ack_alarm(s_hist, 0);
+        s_last_alarm_seq = 0; /* Force refresh */
+    }
+}
+
 static void format_value(const edgehmi_widget_t *w, double val, char *buf, size_t cap) {
     if (w->unit[0] != '\0') {
         snprintf(buf, cap, "%.*f %s", (int)w->decimals, val, w->unit);
@@ -283,6 +321,21 @@ static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t q
             }
             break;
 
+        case WIDGET_SLIDER:
+            lv_slider_set_value(b->obj, (int32_t)lround(val), LV_ANIM_OFF);
+            if (b->aux_label) {
+                format_value(w, val, txt, sizeof(txt));
+                lv_label_set_text(b->aux_label, txt);
+            }
+            break;
+
+        case WIDGET_SPINBOX:
+            if (b->aux_label) {
+                format_value(w, val, txt, sizeof(txt));
+                lv_label_set_text(b->aux_label, txt);
+            }
+            break;
+
         default:
             break;
     }
@@ -305,7 +358,9 @@ void edgehmi_ui_destroy(void) {
     s_active_page = 0;
 }
 
-edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg, edgehmi_bus_t *bus) {
+edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg,
+                               edgehmi_bus_t *bus,
+                               edgehmi_history_t *hist) {
     if (!cfg || !bus) {
         return EDGEHMI_ERR_INVALID_ARG;
     }
@@ -325,6 +380,8 @@ edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg, edgehmi_bus_t *bus) 
     s_active_page = 0;
     s_cfg = cfg;
     s_bus = bus;
+    s_hist = hist;
+    s_last_alarm_seq = 0;
 
     uint32_t bg_hex = cfg->dark_theme ? 0x0B1220u : 0xF8FAFCu;
     uint32_t card_hex = cfg->dark_theme ? 0x111C2Eu : 0xFFFFFFu;
@@ -429,6 +486,100 @@ edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg, edgehmi_bus_t *bus) 
                     b->chart_ser = lv_chart_add_series(obj, lv_color_hex(w->color_rgb),
                                                        LV_CHART_AXIS_PRIMARY_Y);
                     break;
+
+                case WIDGET_SLIDER:
+                    obj = lv_slider_create(scr);
+                    lv_slider_set_range(obj, (int32_t)lround(w->min_val), (int32_t)lround(w->max_val));
+                    lv_obj_set_style_bg_color(obj, lv_color_hex(w->color_rgb), LV_PART_INDICATOR);
+                    lv_obj_add_event_cb(obj, on_slider_released, LV_EVENT_RELEASED, (void *)w);
+                    break;
+
+                case WIDGET_SPINBOX: {
+                    obj = lv_obj_create(scr);
+                    lv_obj_set_style_bg_color(obj, lv_color_hex(card_hex), LV_PART_MAIN);
+                    lv_obj_set_style_border_color(obj, lv_color_hex(0x334155u), LV_PART_MAIN);
+                    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+                    lv_obj_set_style_radius(obj, 8, LV_PART_MAIN);
+                    lv_obj_set_style_pad_all(obj, 4, LV_PART_MAIN);
+                    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+
+                    lv_obj_t *bdec = lv_button_create(obj);
+                    lv_obj_set_size(bdec, 36, LV_PCT(100));
+                    lv_obj_align(bdec, LV_ALIGN_LEFT_MID, 0, 0);
+                    lv_obj_add_event_cb(bdec, on_spinbox_dec, LV_EVENT_CLICKED, (void *)w);
+                    lv_obj_t *dl = lv_label_create(bdec);
+                    lv_label_set_text(dl, "-");
+                    lv_obj_center(dl);
+
+                    b->aux_label = lv_label_create(obj);
+                    lv_label_set_text(b->aux_label, "--");
+                    lv_obj_set_style_text_color(b->aux_label, lv_color_hex(w->color_rgb), LV_PART_MAIN);
+                    lv_obj_center(b->aux_label);
+
+                    lv_obj_t *binc = lv_button_create(obj);
+                    lv_obj_set_size(binc, 36, LV_PCT(100));
+                    lv_obj_align(binc, LV_ALIGN_RIGHT_MID, 0, 0);
+                    lv_obj_add_event_cb(binc, on_spinbox_inc, LV_EVENT_CLICKED, (void *)w);
+                    lv_obj_t *il = lv_label_create(binc);
+                    lv_label_set_text(il, "+");
+                    lv_obj_center(il);
+                    break;
+                }
+
+                case WIDGET_ALARM_LIST: {
+                    obj = lv_obj_create(scr);
+                    lv_obj_set_style_bg_color(obj, lv_color_hex(card_hex), LV_PART_MAIN);
+                    lv_obj_set_style_border_color(obj, lv_color_hex(0x334155u), LV_PART_MAIN);
+                    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+                    lv_obj_set_style_radius(obj, 8, LV_PART_MAIN);
+                    b->aux_label = lv_label_create(obj);
+                    lv_label_set_text(b->aux_label, "No active alarms");
+                    lv_obj_set_style_text_color(b->aux_label, lv_color_hex(text_hex), LV_PART_MAIN);
+                    lv_obj_align(b->aux_label, LV_ALIGN_TOP_LEFT, 4, 4);
+
+                    lv_obj_t *ack = lv_button_create(obj);
+                    lv_obj_set_size(ack, 76, 26);
+                    lv_obj_align(ack, LV_ALIGN_TOP_RIGHT, -2, 0);
+                    lv_obj_add_event_cb(ack, on_alarm_ack_all, LV_EVENT_CLICKED, NULL);
+                    lv_obj_t *al = lv_label_create(ack);
+                    lv_label_set_text(al, "ACK");
+                    lv_obj_center(al);
+                    break;
+                }
+
+                case WIDGET_QRCODE: {
+                    const char *qr_txt = w->src[0] ? w->src : (w->text[0] ? w->text : "http://edgehmi.local");
+#if defined(LV_USE_QRCODE) && LV_USE_QRCODE
+                    int32_t qsz = w->w < w->h ? w->w : w->h;
+                    obj = lv_qrcode_create(scr);
+                    lv_qrcode_set_size(obj, qsz);
+                    lv_qrcode_set_dark_color(obj, lv_color_hex(0x0F172Au));
+                    lv_qrcode_set_light_color(obj, lv_color_hex(0xFFFFFFu));
+                    lv_qrcode_update(obj, qr_txt, (uint32_t)strlen(qr_txt));
+#else
+                    obj = lv_obj_create(scr);
+                    lv_obj_set_style_bg_color(obj, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
+                    lv_obj_t *ql = lv_label_create(obj);
+                    lv_label_set_text(ql, qr_txt);
+                    lv_obj_set_style_text_color(ql, lv_color_hex(0x0F172Au), LV_PART_MAIN);
+                    lv_obj_center(ql);
+#endif
+                    break;
+                }
+
+                case WIDGET_IMAGE: {
+                    obj = lv_obj_create(scr);
+                    lv_obj_set_style_bg_color(obj, lv_color_hex(card_hex), LV_PART_MAIN);
+                    lv_obj_set_style_border_color(obj, lv_color_hex(w->color_rgb), LV_PART_MAIN);
+                    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+                    lv_obj_set_style_radius(obj, 8, LV_PART_MAIN);
+                    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+                    lv_obj_t *im = lv_label_create(obj);
+                    lv_label_set_text(im, w->text[0] ? w->text : (w->src[0] ? w->src : "IMG"));
+                    lv_obj_set_style_text_color(im, lv_color_hex(w->color_rgb), LV_PART_MAIN);
+                    lv_obj_center(im);
+                    break;
+                }
             }
 
             if (obj) {
@@ -513,7 +664,28 @@ void edgehmi_ui_sync_tick(void) {
     ui_page_runtime_t *rt = &s_pages[s_active_page];
     for (size_t i = 0; i < rt->binding_count; ++i) {
         ui_binding_t *b = &rt->bindings[i];
-        if (!b->meta || b->meta->bind_tag_idx < 0) continue;
+        if (!b->meta) continue;
+
+        if (b->meta->type == WIDGET_ALARM_LIST && s_hist && b->aux_label) {
+            if (s_hist->next_alarm_id != s_last_alarm_seq) {
+                s_last_alarm_seq = s_hist->next_alarm_id;
+                char abuf[320] = {0};
+                size_t pos = 0;
+                size_t shown = s_hist->alarm_count > 4 ? 4 : s_hist->alarm_count;
+                for (size_t k = 0; k < shown && pos < sizeof(abuf) - 48; ++k) {
+                    size_t idx = (s_hist->alarm_head + EDGEHMI_MAX_ALARMS - 1u - k) % EDGEHMI_MAX_ALARMS;
+                    const edgehmi_alarm_record_t *ar = &s_hist->alarms[idx];
+                    pos += (size_t)snprintf(abuf + pos, sizeof(abuf) - pos, "%s%s %s",
+                                            k > 0 ? "\n" : "",
+                                            ar->acknowledged ? "[ACK]" : "[!]",
+                                            ar->message);
+                }
+                lv_label_set_text(b->aux_label, pos > 0 ? abuf : "No active alarms");
+            }
+            continue;
+        }
+
+        if (b->meta->bind_tag_idx < 0) continue;
 
         double val = 0.0;
         edgehmi_quality_t qual = TAG_QUAL_INIT;

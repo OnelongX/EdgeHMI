@@ -22,7 +22,11 @@ VALID_TYPES = {"bool", "u16", "i16", "u32", "f32"}
 VALID_BYTE_ORDERS = {"ABCD", "CDAB", "BADC", "DCBA"}
 VALID_FCS = {1, 2, 3, 4, 5, 6, 16}
 VALID_OPS = {">", ">=", "<", "<=", "==", "!="}
-VALID_WIDGETS = {"card", "label", "value", "gauge", "bar", "button", "switch", "badge", "chart"}
+VALID_WIDGETS = {
+    "card", "label", "value", "gauge", "bar", "button", "switch", "badge", "chart",
+    "slider", "spinbox", "alarm_list", "qrcode", "image",
+}
+VALID_IO_MODES = {"di", "do", "adc", "pwm"}
 
 
 def plan_modbus_blocks(
@@ -158,6 +162,49 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
                 if key in used_regs:
                     warnings.append(f"points[{idx}] ({tag}): overlapping register slave={slave} fc={fc} addr={addr + offset}")
                 used_regs.add(key)
+
+    # 2b. Optional Local IO (GPIO/ADC/PWM) & CAN Bus Signals
+    local_io = cfg.get("local_io", [])
+    if isinstance(local_io, list):
+        used_pins: set[int] = set()
+        for idx, io in enumerate(local_io):
+            tag = io.get("tag", "")
+            pin = io.get("pin")
+            mode = io.get("mode")
+            if not isinstance(tag, str) or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]{0,31}$", tag):
+                errors.append(f"local_io[{idx}]: invalid tag name '{tag}'")
+                continue
+            if tag in tags:
+                errors.append(f"local_io[{idx}]: duplicate tag '{tag}'")
+            if not (isinstance(pin, int) and 0 <= pin <= 48):
+                errors.append(f"local_io[{idx}] ({tag}): invalid GPIO pin {pin}")
+            elif pin in used_pins:
+                errors.append(f"local_io[{idx}] ({tag}): duplicate GPIO pin {pin}")
+            else:
+                used_pins.add(pin)
+            if mode not in VALID_IO_MODES:
+                errors.append(f"local_io[{idx}] ({tag}): invalid mode '{mode}'")
+            tags[tag] = {"tag": tag, "rw": "rw" if mode in {"do", "pwm"} else "r", "retentive": io.get("retentive", False)}
+
+    can_bus = cfg.get("can_bus", {})
+    if isinstance(can_bus, dict) and isinstance(can_bus.get("signals"), list):
+        for idx, sig in enumerate(can_bus["signals"]):
+            tag = sig.get("tag", "")
+            if not isinstance(tag, str) or not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]{0,31}$", tag):
+                errors.append(f"can_bus.signals[{idx}]: invalid tag name '{tag}'")
+                continue
+            if tag in tags:
+                errors.append(f"can_bus.signals[{idx}]: duplicate tag '{tag}'")
+            bl = sig.get("bit_len", 0)
+            sb = sig.get("start_bit", -1)
+            if not (isinstance(bl, int) and 1 <= bl <= 32):
+                errors.append(f"can_bus.signals[{idx}] ({tag}): bit_len must be 1..32")
+            if not (isinstance(sb, int) and 0 <= sb <= 63):
+                errors.append(f"can_bus.signals[{idx}] ({tag}): start_bit must be 0..63")
+            tags[tag] = {"tag": tag, "rw": "r", "retentive": False}
+
+    if len(tags) > MAX_TAGS:
+        errors.append(f"total tags across modbus+local_io+can ({len(tags)}) exceeds MAX_TAGS ({MAX_TAGS})")
 
     # 3. Rules
     rules = cfg.get("rules", [])

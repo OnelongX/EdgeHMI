@@ -102,15 +102,20 @@ static edgehmi_err_t parse_rule_cond_item(const cJSON *obj,
 static edgehmi_widget_type_t parse_widget_type(const char *s, bool *ok) {
     *ok = true;
     if (!s) { *ok = false; return WIDGET_LABEL; }
-    if (strcmp(s, "card") == 0)   return WIDGET_CARD;
-    if (strcmp(s, "label") == 0)  return WIDGET_LABEL;
-    if (strcmp(s, "value") == 0)  return WIDGET_VALUE;
-    if (strcmp(s, "gauge") == 0)  return WIDGET_GAUGE;
-    if (strcmp(s, "bar") == 0)    return WIDGET_BAR;
-    if (strcmp(s, "button") == 0) return WIDGET_BUTTON;
-    if (strcmp(s, "switch") == 0) return WIDGET_SWITCH;
-    if (strcmp(s, "badge") == 0)  return WIDGET_BADGE;
-    if (strcmp(s, "chart") == 0)  return WIDGET_CHART;
+    if (strcmp(s, "card") == 0)       return WIDGET_CARD;
+    if (strcmp(s, "label") == 0)      return WIDGET_LABEL;
+    if (strcmp(s, "value") == 0)      return WIDGET_VALUE;
+    if (strcmp(s, "gauge") == 0)      return WIDGET_GAUGE;
+    if (strcmp(s, "bar") == 0)        return WIDGET_BAR;
+    if (strcmp(s, "button") == 0)     return WIDGET_BUTTON;
+    if (strcmp(s, "switch") == 0)     return WIDGET_SWITCH;
+    if (strcmp(s, "badge") == 0)      return WIDGET_BADGE;
+    if (strcmp(s, "chart") == 0)      return WIDGET_CHART;
+    if (strcmp(s, "slider") == 0)     return WIDGET_SLIDER;
+    if (strcmp(s, "spinbox") == 0)    return WIDGET_SPINBOX;
+    if (strcmp(s, "alarm_list") == 0) return WIDGET_ALARM_LIST;
+    if (strcmp(s, "qrcode") == 0)     return WIDGET_QRCODE;
+    if (strcmp(s, "image") == 0)      return WIDGET_IMAGE;
     *ok = false;
     return WIDGET_LABEL;
 }
@@ -308,6 +313,186 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
             return rc;
         }
         out_cfg->point_count++;
+    }
+
+    /* optional: modbus_tcp */
+    out_cfg->modbus_tcp.port = 502;
+    out_cfg->modbus_tcp.timeout_ms = 500;
+    const cJSON *jmbtcp = cJSON_GetObjectItemCaseSensitive(root, "modbus_tcp");
+    if (cJSON_IsObject(jmbtcp)) {
+        const cJSON *jen = cJSON_GetObjectItemCaseSensitive(jmbtcp, "enabled");
+        out_cfg->modbus_tcp.enabled = cJSON_IsBool(jen) && cJSON_IsTrue(jen);
+        const cJSON *jhost = cJSON_GetObjectItemCaseSensitive(jmbtcp, "host");
+        if (cJSON_IsString(jhost)) copy_str(out_cfg->modbus_tcp.host, sizeof(out_cfg->modbus_tcp.host), jhost->valuestring);
+        const cJSON *jport2 = cJSON_GetObjectItemCaseSensitive(jmbtcp, "port");
+        if (cJSON_IsNumber(jport2) && jport2->valueint > 0) out_cfg->modbus_tcp.port = (uint16_t)jport2->valueint;
+        const cJSON *jtmo2 = cJSON_GetObjectItemCaseSensitive(jmbtcp, "timeout_ms");
+        if (cJSON_IsNumber(jtmo2) && jtmo2->valueint >= 50) out_cfg->modbus_tcp.timeout_ms = (uint32_t)jtmo2->valueint;
+    }
+
+    /* optional: local_io (native ESP32-S3 GPIO DI/DO/ADC/PWM mapped into unified Data Bus) */
+    const cJSON *jlio = cJSON_GetObjectItemCaseSensitive(root, "local_io");
+    if (cJSON_IsArray(jlio)) {
+        const cJSON *ji = NULL;
+        cJSON_ArrayForEach(ji, jlio) {
+            if (out_cfg->local_io_count >= EDGEHMI_MAX_LOCAL_IO) {
+                set_err(err_buf, err_buf_len, "exceeded max local_io entries");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_FULL;
+            }
+            const cJSON *jtag = cJSON_GetObjectItemCaseSensitive(ji, "tag");
+            const cJSON *jpin = cJSON_GetObjectItemCaseSensitive(ji, "pin");
+            const cJSON *jmode = cJSON_GetObjectItemCaseSensitive(ji, "mode");
+            if (!cJSON_IsString(jtag) || !cJSON_IsNumber(jpin) || !cJSON_IsString(jmode)) {
+                set_err(err_buf, err_buf_len, "local_io entry requires tag, pin, mode");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            edgehmi_local_io_t *io = &out_cfg->local_io[out_cfg->local_io_count];
+            memset(io, 0, sizeof(*io));
+            copy_str(io->tag_name, sizeof(io->tag_name), jtag->valuestring);
+            io->gpio_pin = (int8_t)jpin->valueint;
+            edgehmi_tag_type_t tt = TAG_TYPE_BOOL;
+            edgehmi_access_t acc = TAG_ACCESS_R;
+            if (strcmp(jmode->valuestring, "di") == 0)       { io->mode = LOCAL_IO_DI;  tt = TAG_TYPE_BOOL; acc = TAG_ACCESS_R; }
+            else if (strcmp(jmode->valuestring, "do") == 0)  { io->mode = LOCAL_IO_DO;  tt = TAG_TYPE_BOOL; acc = TAG_ACCESS_RW; }
+            else if (strcmp(jmode->valuestring, "adc") == 0) { io->mode = LOCAL_IO_ADC; tt = TAG_TYPE_F32;  acc = TAG_ACCESS_R; }
+            else if (strcmp(jmode->valuestring, "pwm") == 0) { io->mode = LOCAL_IO_PWM; tt = TAG_TYPE_U16;  acc = TAG_ACCESS_RW; }
+            else {
+                set_err(err_buf, err_buf_len, "invalid local_io mode (di/do/adc/pwm)");
+                cJSON_Delete(root);
+                return EDGEHMI_ERR_SCHEMA;
+            }
+            const cJSON *jal = cJSON_GetObjectItemCaseSensitive(ji, "active_low");
+            io->active_low = cJSON_IsBool(jal) && cJSON_IsTrue(jal);
+            const cJSON *jsc = cJSON_GetObjectItemCaseSensitive(ji, "scale");
+            io->scale = cJSON_IsNumber(jsc) ? jsc->valuedouble : 1.0;
+            const cJSON *jof = cJSON_GetObjectItemCaseSensitive(ji, "offset");
+            io->offset = cJSON_IsNumber(jof) ? jof->valuedouble : 0.0;
+            const cJSON *jdf = cJSON_GetObjectItemCaseSensitive(ji, "default");
+            io->default_val = cJSON_IsNumber(jdf) ? jdf->valuedouble : 0.0;
+            const cJSON *jrt = cJSON_GetObjectItemCaseSensitive(ji, "retentive");
+            io->retentive = cJSON_IsBool(jrt) && cJSON_IsTrue(jrt);
+            const cJSON *jun = cJSON_GetObjectItemCaseSensitive(ji, "unit");
+            if (cJSON_IsString(jun)) copy_str(io->unit, sizeof(io->unit), jun->valuestring);
+
+            edgehmi_err_t rc = edgehmi_bus_register(
+                bus, io->tag_name, tt, acc, io->unit, io->default_val, &io->tag_idx);
+            if (rc != EDGEHMI_OK) {
+                set_err(err_buf, err_buf_len, "failed to register local_io tag");
+                cJSON_Delete(root);
+                return rc;
+            }
+            out_cfg->local_io_count++;
+        }
+    }
+
+    /* optional: can_bus (ESP32-S3 native TWAI CAN 2.0B for BMS / servo drives) */
+    out_cfg->can_bus.bitrate = 500000;
+    out_cfg->can_bus.tx_pin = 20;
+    out_cfg->can_bus.rx_pin = 19;
+    const cJSON *jcan = cJSON_GetObjectItemCaseSensitive(root, "can_bus");
+    if (cJSON_IsObject(jcan)) {
+        const cJSON *jen = cJSON_GetObjectItemCaseSensitive(jcan, "enabled");
+        out_cfg->can_bus.enabled = cJSON_IsBool(jen) && cJSON_IsTrue(jen);
+        const cJSON *jbr = cJSON_GetObjectItemCaseSensitive(jcan, "bitrate");
+        if (cJSON_IsNumber(jbr)) out_cfg->can_bus.bitrate = (uint32_t)jbr->valueint;
+        const cJSON *jctx = cJSON_GetObjectItemCaseSensitive(jcan, "tx_pin");
+        if (cJSON_IsNumber(jctx)) out_cfg->can_bus.tx_pin = (int8_t)jctx->valueint;
+        const cJSON *jcrx = cJSON_GetObjectItemCaseSensitive(jcan, "rx_pin");
+        if (cJSON_IsNumber(jcrx)) out_cfg->can_bus.rx_pin = (int8_t)jcrx->valueint;
+
+        const cJSON *jsigs = cJSON_GetObjectItemCaseSensitive(jcan, "signals");
+        if (cJSON_IsArray(jsigs)) {
+            const cJSON *js = NULL;
+            cJSON_ArrayForEach(js, jsigs) {
+                if (out_cfg->can_bus.signal_count >= EDGEHMI_MAX_CAN_SIGNALS) {
+                    set_err(err_buf, err_buf_len, "exceeded max can_bus signals");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_FULL;
+                }
+                const cJSON *jtag = cJSON_GetObjectItemCaseSensitive(js, "tag");
+                const cJSON *jcid = cJSON_GetObjectItemCaseSensitive(js, "can_id");
+                const cJSON *jsb  = cJSON_GetObjectItemCaseSensitive(js, "start_bit");
+                const cJSON *jbl  = cJSON_GetObjectItemCaseSensitive(js, "bit_len");
+                if (!cJSON_IsString(jtag) || !cJSON_IsNumber(jcid) ||
+                    !cJSON_IsNumber(jsb) || !cJSON_IsNumber(jbl)) {
+                    set_err(err_buf, err_buf_len, "can_bus signal requires tag, can_id, start_bit, bit_len");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_SCHEMA;
+                }
+                edgehmi_can_signal_t *sig = &out_cfg->can_bus.signals[out_cfg->can_bus.signal_count];
+                memset(sig, 0, sizeof(*sig));
+                copy_str(sig->tag_name, sizeof(sig->tag_name), jtag->valuestring);
+                sig->can_id = (uint32_t)jcid->valuedouble;
+                const cJSON *jext = cJSON_GetObjectItemCaseSensitive(js, "ext_id");
+                sig->ext_id = cJSON_IsBool(jext) && cJSON_IsTrue(jext);
+                sig->start_bit = (uint8_t)jsb->valueint;
+                sig->bit_len = (uint8_t)jbl->valueint;
+                const cJSON *jsgn = cJSON_GetObjectItemCaseSensitive(js, "signed");
+                sig->is_signed = cJSON_IsBool(jsgn) && cJSON_IsTrue(jsgn);
+                const cJSON *jbe = cJSON_GetObjectItemCaseSensitive(js, "big_endian");
+                sig->big_endian = cJSON_IsBool(jbe) && cJSON_IsTrue(jbe);
+                const cJSON *jsc = cJSON_GetObjectItemCaseSensitive(js, "scale");
+                sig->scale = cJSON_IsNumber(jsc) ? jsc->valuedouble : 1.0;
+                const cJSON *jof = cJSON_GetObjectItemCaseSensitive(js, "offset");
+                sig->offset = cJSON_IsNumber(jof) ? jof->valuedouble : 0.0;
+                const cJSON *jdf = cJSON_GetObjectItemCaseSensitive(js, "default");
+                sig->default_val = cJSON_IsNumber(jdf) ? jdf->valuedouble : 0.0;
+                const cJSON *jun = cJSON_GetObjectItemCaseSensitive(js, "unit");
+                if (cJSON_IsString(jun)) copy_str(sig->unit, sizeof(sig->unit), jun->valuestring);
+
+                edgehmi_err_t rc = edgehmi_bus_register(
+                    bus, sig->tag_name, TAG_TYPE_F32, TAG_ACCESS_R, sig->unit, sig->default_val, &sig->tag_idx);
+                if (rc != EDGEHMI_OK) {
+                    set_err(err_buf, err_buf_len, "failed to register can_bus signal tag");
+                    cJSON_Delete(root);
+                    return rc;
+                }
+                out_cfg->can_bus.signal_count++;
+            }
+        }
+    }
+
+    /* optional: cloud (Core 0 MQTT telemetry & remote command) */
+    out_cfg->cloud.publish_interval_ms = 5000;
+    copy_str(out_cfg->cloud.topic_prefix, sizeof(out_cfg->cloud.topic_prefix), "edgehmi");
+    const cJSON *jcloud = cJSON_GetObjectItemCaseSensitive(root, "cloud");
+    if (cJSON_IsObject(jcloud)) {
+        const cJSON *jen = cJSON_GetObjectItemCaseSensitive(jcloud, "enabled");
+        out_cfg->cloud.enabled = cJSON_IsBool(jen) && cJSON_IsTrue(jen);
+        const cJSON *juri = cJSON_GetObjectItemCaseSensitive(jcloud, "mqtt_uri");
+        if (cJSON_IsString(juri)) copy_str(out_cfg->cloud.mqtt_uri, sizeof(out_cfg->cloud.mqtt_uri), juri->valuestring);
+        const cJSON *jcid = cJSON_GetObjectItemCaseSensitive(jcloud, "client_id");
+        if (cJSON_IsString(jcid)) copy_str(out_cfg->cloud.client_id, sizeof(out_cfg->cloud.client_id), jcid->valuestring);
+        const cJSON *jusr = cJSON_GetObjectItemCaseSensitive(jcloud, "username");
+        if (cJSON_IsString(jusr)) copy_str(out_cfg->cloud.username, sizeof(out_cfg->cloud.username), jusr->valuestring);
+        const cJSON *jpwd = cJSON_GetObjectItemCaseSensitive(jcloud, "password");
+        if (cJSON_IsString(jpwd)) copy_str(out_cfg->cloud.password, sizeof(out_cfg->cloud.password), jpwd->valuestring);
+        const cJSON *jtop = cJSON_GetObjectItemCaseSensitive(jcloud, "topic_prefix");
+        if (cJSON_IsString(jtop)) copy_str(out_cfg->cloud.topic_prefix, sizeof(out_cfg->cloud.topic_prefix), jtop->valuestring);
+        const cJSON *jint = cJSON_GetObjectItemCaseSensitive(jcloud, "publish_interval_ms");
+        if (cJSON_IsNumber(jint) && jint->valueint >= 500) out_cfg->cloud.publish_interval_ms = (uint32_t)jint->valueint;
+    }
+
+    /* optional: network (Wi-Fi + SoftAP fallback + 4G Cat.1 PPP modem) */
+    out_cfg->net.ap_fallback = true;
+    out_cfg->net.modem_tx_pin = -1;
+    out_cfg->net.modem_rx_pin = -1;
+    const cJSON *jnet = cJSON_GetObjectItemCaseSensitive(root, "network");
+    if (cJSON_IsObject(jnet)) {
+        const cJSON *jssid = cJSON_GetObjectItemCaseSensitive(jnet, "wifi_ssid");
+        if (cJSON_IsString(jssid)) copy_str(out_cfg->net.ssid, sizeof(out_cfg->net.ssid), jssid->valuestring);
+        const cJSON *jwpwd = cJSON_GetObjectItemCaseSensitive(jnet, "wifi_password");
+        if (cJSON_IsString(jwpwd)) copy_str(out_cfg->net.password, sizeof(out_cfg->net.password), jwpwd->valuestring);
+        const cJSON *jap = cJSON_GetObjectItemCaseSensitive(jnet, "ap_fallback");
+        if (cJSON_IsBool(jap)) out_cfg->net.ap_fallback = cJSON_IsTrue(jap);
+        const cJSON *j4g = cJSON_GetObjectItemCaseSensitive(jnet, "modem_4g_enabled");
+        out_cfg->net.modem_4g_enabled = cJSON_IsBool(j4g) && cJSON_IsTrue(j4g);
+        const cJSON *jmtx = cJSON_GetObjectItemCaseSensitive(jnet, "modem_tx_pin");
+        if (cJSON_IsNumber(jmtx)) out_cfg->net.modem_tx_pin = (int8_t)jmtx->valueint;
+        const cJSON *jmrx = cJSON_GetObjectItemCaseSensitive(jnet, "modem_rx_pin");
+        if (cJSON_IsNumber(jmrx)) out_cfg->net.modem_rx_pin = (int8_t)jmrx->valueint;
     }
 
     /* rules */
@@ -509,6 +694,7 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
             w->w = (int16_t)jww->valueint;
             w->h = (int16_t)jwh->valueint;
             w->max_val = 100.0;
+            w->step = 1.0;
             w->decimals = 1;
             w->color_rgb = 0x2DD4BFu;
 
@@ -532,10 +718,14 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
             if (cJSON_IsNumber(jmin)) w->min_val = jmin->valuedouble;
             const cJSON *jmax = cJSON_GetObjectItemCaseSensitive(jw_item, "max");
             if (cJSON_IsNumber(jmax)) w->max_val = jmax->valuedouble;
+            const cJSON *jstep = cJSON_GetObjectItemCaseSensitive(jw_item, "step");
+            if (cJSON_IsNumber(jstep) && jstep->valuedouble > 0.0) w->step = jstep->valuedouble;
             const cJSON *jdec = cJSON_GetObjectItemCaseSensitive(jw_item, "decimals");
             if (cJSON_IsNumber(jdec) && jdec->valueint >= 0) w->decimals = (uint8_t)jdec->valueint;
             const cJSON *jcol = cJSON_GetObjectItemCaseSensitive(jw_item, "color");
             if (cJSON_IsString(jcol)) w->color_rgb = parse_hex_color(jcol->valuestring, 0x2DD4BFu);
+            const cJSON *jsrc = cJSON_GetObjectItemCaseSensitive(jw_item, "src");
+            if (cJSON_IsString(jsrc)) copy_str(w->src, sizeof(w->src), jsrc->valuestring);
             const cJSON *jwv = cJSON_GetObjectItemCaseSensitive(jw_item, "write_value");
             if (cJSON_IsNumber(jwv)) {
                 w->has_write_value = true;

@@ -2,6 +2,9 @@ idf_component_register(
     SRCS
         "src/data_bus.c"
         "src/modbus_rtu.c"
+        "src/modbus_tcp.c"
+        "src/can_codec.c"
+        "src/history_log.c"
         "src/rule_engine.c"
         "src/config_loader.c"
         "src/ota_package.c"

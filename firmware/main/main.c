@@ -1,6 +1,11 @@
+#include "cloud_mqtt.h"
 #include "config_loader.h"
 #include "data_bus.h"
 #include "discovery_service.h"
+#include "edgehmi_bsp.h"
+#include "fieldbus_ext.h"
+#include "history_log.h"
+#include "local_io.h"
 #include "modbus_rtu.h"
 #include "ota_config.h"
 #include "ota_firmware.h"
@@ -28,6 +33,7 @@ static const char *TAG = "edgehmi_main";
 static edgehmi_config_t s_active_cfg;
 static edgehmi_bus_t s_bus;
 static edgehmi_rule_engine_t s_rules;
+static edgehmi_history_t s_history;
 static edgehmi_mb_block_t s_mb_blocks[EDGEHMI_MAX_MODBUS_BLOCKS];
 static size_t s_mb_block_count = 0;
 static edgehmi_mb_stats_t s_mb_stats;
@@ -81,6 +87,8 @@ static uint64_t now_ms(void) {
 
 static void on_alarm_event(const edgehmi_alarm_event_t *evt, void *ctx) {
     (void)ctx;
+    edgehmi_history_record_alarm(&s_history, evt);
+    edgehmi_cloud_mqtt_publish_alarm(evt);
     ESP_LOGW(TAG, "[ALARM %s] rule=%s level=%d msg=%s",
              evt->active ? "RAISED" : "CLEARED",
              evt->rule_id, (int)evt->level, evt->message);
@@ -218,10 +226,23 @@ static void control_task(void *arg) {
             }
         }
 
-        /* 3. Mark stale tags & evaluate deterministic interlock/Fail-Safe rules */
+        /* 2b. Optional Modbus TCP scan, native CAN (TWAI) RX drain & native GPIO/ADC Local IO */
         uint64_t ts = now_ms();
+        if (s_active_cfg.modbus_tcp.enabled) {
+            edgehmi_mbtcp_scan_blocks(&s_active_cfg, s_mb_blocks, s_mb_block_count, &s_bus, &s_mb_stats, ts);
+        }
+        edgehmi_can_poll_rx(&s_active_cfg, &s_bus, ts);
+        edgehmi_local_io_sync(&s_active_cfg, &s_bus, ts);
+
+        /* 3. Mark stale tags, evaluate deterministic interlock rules & record periodic history */
         edgehmi_bus_check_stale(&s_bus, ts, interval_ms * 10ULL);
         edgehmi_rules_eval(&s_rules, &s_bus, ts);
+
+        static uint64_t s_last_hist_ms = 0;
+        if (ts - s_last_hist_ms >= 5000ULL) {
+            edgehmi_history_record_sample(&s_history, &s_bus, ts);
+            s_last_hist_ms = ts;
+        }
         xSemaphoreGive(s_cfg_mutex);
 
         /* Mark both NVS config boot & ESP-IDF OTA app healthy after 15 seconds */
@@ -245,7 +266,7 @@ static void ui_task(void *arg) {
         xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
         if (s_ui_reload_pending) {
             s_ui_reload_pending = false;
-            edgehmi_ui_build(&s_active_cfg, &s_bus);
+            edgehmi_ui_build(&s_active_cfg, &s_bus, &s_history);
         }
         edgehmi_ui_sync_tick();
         lv_timer_handler();
@@ -291,13 +312,36 @@ static edgehmi_err_t reload_config_atomic(const char *json_buf, char *err_buf, s
         edgehmi_bus_register(&s_bus, pt->tag_name, pt->type, pt->access,
                              pt->unit, init_val, &pt->tag_idx);
     }
+    /* Re-register native Local IO & CAN signals onto live bus */
+    for (size_t i = 0; i < s_active_cfg.local_io_count; ++i) {
+        edgehmi_local_io_t *io = &s_active_cfg.local_io[i];
+        edgehmi_tag_type_t tt = (io->mode == LOCAL_IO_ADC) ? TAG_TYPE_F32
+                                : (io->mode == LOCAL_IO_PWM) ? TAG_TYPE_U16
+                                                             : TAG_TYPE_BOOL;
+        edgehmi_access_t acc = (io->mode == LOCAL_IO_DO || io->mode == LOCAL_IO_PWM) ? TAG_ACCESS_RW : TAG_ACCESS_R;
+        double init_val = io->default_val;
+        if (io->retentive) {
+            double saved = 0.0;
+            if (nvs_retentive_load(io->tag_name, &saved)) init_val = saved;
+        }
+        edgehmi_bus_register(&s_bus, io->tag_name, tt, acc, io->unit, init_val, &io->tag_idx);
+    }
+    for (size_t i = 0; i < s_active_cfg.can_bus.signal_count; ++i) {
+        edgehmi_can_signal_t *sig = &s_active_cfg.can_bus.signals[i];
+        edgehmi_bus_register(&s_bus, sig->tag_name, TAG_TYPE_F32, TAG_ACCESS_R,
+                             sig->unit, sig->default_val, &sig->tag_idx);
+    }
+
     s_mb_block_count = edgehmi_mb_plan_blocks(
         s_active_cfg.points, s_active_cfg.point_count,
         s_mb_blocks, EDGEHMI_MAX_MODBUS_BLOCKS, 4, 32);
     edgehmi_rules_init(&s_rules, s_active_cfg.rules, s_active_cfg.rule_count, on_alarm_event, NULL);
+    edgehmi_history_init(&s_history, &s_bus);
 
-    /* Ensure RS485 UART is initialized / reconfigured for new baudrate or pins */
+    /* Ensure RS485 UART, Local IO, CAN (TWAI) & Modbus TCP are initialized / reconfigured */
     rs485_configure(&s_active_cfg);
+    edgehmi_local_io_configure(&s_active_cfg);
+    edgehmi_fieldbus_ext_configure(&s_active_cfg);
 
     /* Apply JSON watchdog_timeout_s to ESP-IDF Task Watchdog */
     if (s_active_cfg.watchdog_timeout_s >= 3) {
@@ -328,8 +372,7 @@ void app_main(void) {
     s_cfg_mutex = xSemaphoreCreateMutex();
     edgehmi_bus_init(&s_bus, bus_lock_cb, bus_unlock_cb, s_bus_mutex);
 
-    lv_init();
-    /* Board-specific RGB/SPI LCD & GT911 touch driver registration hooks here */
+    edgehmi_bsp_init();
 
     if (edgehmi_storage_init() == EDGEHMI_OK) {
         edgehmi_boot_begin_check();
@@ -349,9 +392,11 @@ void app_main(void) {
         }
     }
 
-    /* Core 0: HTTP config + firmware OTA server & LAN discovery (mDNS + UDP 56888) */
-    edgehmi_http_start(&s_bus, &s_active_cfg, &s_mb_stats, s_cfg_mutex, reload_config_atomic);
+    /* Core 0: Wi-Fi/SoftAP/4G + HTTP/OTA/Historian + Cloud MQTT + LAN discovery */
+    edgehmi_net_start(&s_active_cfg);
+    edgehmi_http_start(&s_bus, &s_active_cfg, &s_mb_stats, &s_history, s_cfg_mutex, reload_config_atomic);
     edgehmi_discovery_start(&s_active_cfg, &s_bus, s_cfg_mutex, 80);
+    edgehmi_cloud_mqtt_start(&s_active_cfg, &s_bus, s_cfg_mutex);
 
     /* Core 1: Deterministic fieldbus + interlock + LVGL rendering */
     xTaskCreatePinnedToCore(control_task, "edgehmi_ctrl", 6144, NULL, 6, NULL, 1);

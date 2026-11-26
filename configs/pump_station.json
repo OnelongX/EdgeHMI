@@ -30,6 +30,16 @@
       { "tag": "high_alarm",   "slave": 1, "fc": 1, "addr": 10,  "type": "bool", "scale": 1.0,  "offset": 0, "unit": "",     "rw": "rw", "default": 0 }
     ]
   },
+  "local_io": [
+    { "tag": "estop_di",   "pin": 11, "mode": "di", "active_low": true, "default": 0 },
+    { "tag": "buzzer_do",  "pin": 12, "mode": "do", "active_low": false, "default": 0 }
+  ],
+  "cloud": {
+    "enabled": false,
+    "mqtt_uri": "mqtt://broker.emqx.io:1883",
+    "topic_prefix": "edgehmi/pump",
+    "publish_interval_ms": 5000
+  },
   "rules": [
     {
       "id": "rule_high_level_stop",
@@ -87,6 +97,14 @@
       "enabled": true,
       "when": { "on_comm_loss": true, "tag": "tank_level", "debounce_ms": 300 },
       "then": { "action": "alarm", "level": "critical", "message": "RS485 Comm Loss — Fail-Safe pump stop!" }
+    },
+    {
+      "id": "rule_estop_hard_trip",
+      "desc": "板载物理急停按钮(DI)强制锁定停泵",
+      "enabled": true,
+      "enforce": true,
+      "when": { "tag": "estop_di", "op": "==", "value": 1, "debounce_ms": 100 },
+      "then": { "action": "set_tag", "target_tag": "pump_cmd", "value": 0 }
     }
   ],
   "pages": [
@@ -121,13 +139,21 @@
     },
     {
       "id": "diagnostics",
-      "title": "Station Diagnostics",
+      "title": "Station Diagnostics & Setpoints",
       "widgets": [
-        { "id": "diag_title",  "type": "label",  "x": 24,  "y": 18,  "w": 360, "h": 34, "text": "Station Diagnostics — Pump P-01" },
-        { "id": "diag_card",   "type": "card",   "x": 24,  "y": 64,  "w": 752, "h": 300, "text": "MOTOR CURRENT & LEVEL TREND" },
-        { "id": "diag_curr",   "type": "value",  "x": 50,  "y": 116, "w": 220, "h": 42, "bind": "motor_curr", "unit": "A", "decimals": 2, "color": "#F59E0B" },
-        { "id": "diag_chart",  "type": "chart",  "x": 50,  "y": 176, "w": 700, "h": 160, "bind": "tank_level", "min": 0, "max": 100, "color": "#38BDF8" },
-        { "id": "btn_back",    "type": "button", "x": 24,  "y": 396, "w": 200, "h": 54, "text": "<- PROCESS OVERVIEW", "nav_page": "overview", "color": "#334155" }
+        { "id": "diag_title",  "type": "label",      "x": 24,  "y": 18,  "w": 420, "h": 34, "text": "Station Diagnostics & Retentive Setpoints" },
+        { "id": "diag_card",   "type": "card",       "x": 24,  "y": 64,  "w": 450, "h": 304, "text": "MOTOR CURRENT, TARGET LEVEL & TREND" },
+        { "id": "diag_curr",   "type": "value",      "x": 48,  "y": 106, "w": 170, "h": 40, "bind": "motor_curr", "unit": "A", "decimals": 2, "color": "#F59E0B" },
+        { "id": "lbl_tgt",     "type": "label",      "x": 236, "y": 100, "w": 180, "h": 22, "text": "Target Level (NVS)" },
+        { "id": "spn_tgt",     "type": "spinbox",    "x": 236, "y": 124, "w": 216, "h": 40, "bind": "target_level", "unit": "%", "min": 20, "max": 95, "step": 2.5, "decimals": 1, "color": "#2DD4BF" },
+        { "id": "diag_chart",  "type": "chart",      "x": 48,  "y": 180, "w": 404, "h": 168, "bind": "tank_level", "min": 0, "max": 100, "color": "#38BDF8" },
+
+        { "id": "card_alm",    "type": "card",       "x": 494, "y": 64,  "w": 282, "h": 304, "text": "ALARM AUDIT & SERVICE QR" },
+        { "id": "wid_alarms",  "type": "alarm_list", "x": 510, "y": 102, "w": 250, "h": 146, "color": "#EF4444" },
+        { "id": "wid_qr",      "type": "qrcode",     "x": 510, "y": 260, "w": 92,  "h": 92,  "src": "http://edgehmi.local", "text": "Scan for Diagnostics" },
+        { "id": "lbl_qr",      "type": "label",      "x": 612, "y": 276, "w": 152, "h": 60,  "text": "Scan QR for Web Diagnostics & CSV" },
+
+        { "id": "btn_back",    "type": "button",     "x": 24,  "y": 396, "w": 210, "h": 54, "text": "<- PROCESS OVERVIEW", "nav_page": "overview", "color": "#334155" }
       ]
     }
   ]

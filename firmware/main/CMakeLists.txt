@@ -5,11 +5,18 @@ idf_component_register(
         "ota_config.c"
         "ota_firmware.c"
         "discovery_service.c"
+        "local_io.c"
+        "fieldbus_ext.c"
+        "cloud_mqtt.c"
     INCLUDE_DIRS
         "."
     REQUIRES
         edgehmi_core
+        edgehmi_bsp
         driver
+        esp_adc
+        esp_event
+        esp_netif
         esp_http_server
         esp_http_client
         esp_https_ota
@@ -17,6 +24,7 @@ idf_component_register(
         esp_wifi
         lwip
         mdns
+        mqtt
         nvs_flash
         esp_timer
         lvgl

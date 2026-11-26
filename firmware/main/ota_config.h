@@ -5,6 +5,7 @@
 #include "edgehmi_types.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "history_log.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,10 +34,11 @@ edgehmi_err_t edgehmi_storage_read_active(char *out_buf, size_t cap, size_t *out
 /* Atomically persist validated JSON config (staging -> backup -> active) */
 edgehmi_err_t edgehmi_storage_save_active(const char *json_buf, size_t len);
 
-/* Start HTTP server exposing GET /api/health, GET /api/tags, POST /api/config (Bearer auth) */
+/* Start HTTP server exposing /api/health, /api/tags, /api/config, /api/history.csv, /api/alarms */
 edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
                                  const edgehmi_config_t *active_cfg,
                                  const edgehmi_mb_stats_t *mb_stats,
+                                 edgehmi_history_t *history,
                                  SemaphoreHandle_t cfg_mutex,
                                  edgehmi_reload_cb reload_cb);
 

@@ -1,7 +1,10 @@
+#include "can_codec.h"
 #include "config_loader.h"
 #include "data_bus.h"
 #include "discovery_proto.h"
+#include "history_log.h"
 #include "modbus_rtu.h"
+#include "modbus_tcp.h"
 #include "ota_package.h"
 #include "rule_engine.h"
 
@@ -412,6 +415,95 @@ static void test_security_and_nvs_keys(void) {
     printf("  [PASS] test_security_and_nvs_keys (constant-time eq + collision-free NVS keys)\n");
 }
 
+static void test_modbus_tcp_and_can_and_history(void) {
+    /* 1. Modbus TCP MBAP framing + block response decode */
+    edgehmi_bus_t bus;
+    edgehmi_bus_init(&bus, NULL, NULL, NULL);
+    edgehmi_mb_point_t pt;
+    memset(&pt, 0, sizeof(pt));
+    strcpy(pt.tag_name, "plc_speed");
+    pt.slave_id = 1;
+    pt.func_code = 3;
+    pt.reg_addr = 100;
+    pt.type = TAG_TYPE_U16;
+    pt.access = TAG_ACCESS_R;
+    pt.scale = 1.0;
+    assert(edgehmi_bus_register(&bus, pt.tag_name, pt.type, pt.access, "rpm", 0.0, &pt.tag_idx) == EDGEHMI_OK);
+
+    uint8_t tcp_req[16];
+    assert(edgehmi_mbtcp_build_read_req(0x002Au, 1, 3, 100, 1, tcp_req, sizeof(tcp_req)) == 12);
+    assert(tcp_req[0] == 0x00 && tcp_req[1] == 0x2A && tcp_req[5] == 6 && tcp_req[7] == 3);
+
+    edgehmi_mb_block_t blk;
+    memset(&blk, 0, sizeof(blk));
+    blk.slave_id = 1;
+    blk.func_code = 3;
+    blk.start_addr = 100;
+    blk.quantity = 1;
+    blk.point_indices[0] = 0;
+    blk.point_count = 1;
+
+    /* Valid Modbus TCP response: TID=0x002A, Proto=0, Len=5, UID=1, FC=3, ByteCnt=2, Val=1450 (0x05AA) */
+    uint8_t tcp_resp[11] = { 0x00, 0x2A, 0x00, 0x00, 0x00, 0x05, 0x01, 0x03, 0x02, 0x05, 0xAA };
+    assert(edgehmi_mbtcp_parse_block_resp(0x002Au, &blk, &pt, tcp_resp, sizeof(tcp_resp), &bus, 1000) == EDGEHMI_OK);
+    double v = 0.0;
+    assert(edgehmi_bus_get(&bus, pt.tag_idx, &v, NULL) == EDGEHMI_OK && fabs(v - 1450.0) < 1e-6);
+    /* Wrong Transaction ID must fail */
+    assert(edgehmi_mbtcp_parse_block_resp(0x0099u, &blk, &pt, tcp_resp, sizeof(tcp_resp), &bus, 1000) == EDGEHMI_ERR_PARSE);
+
+    /* 2. CAN 2.0B LiFePO4 BMS frame decoding (unsigned voltage + signed negative current) */
+    char *sraw = read_file_all("configs/solar_inverter.json");
+    edgehmi_config_t *scfg = (edgehmi_config_t *)calloc(1, sizeof(edgehmi_config_t));
+    edgehmi_bus_t sbus;
+    edgehmi_bus_init(&sbus, NULL, NULL, NULL);
+    char err[128] = {0};
+    assert(edgehmi_config_load_json(sraw, scfg, &sbus, err, sizeof(err)) == EDGEHMI_OK);
+    assert(scfg->can_bus.enabled && scfg->can_bus.signal_count == 2);
+
+    /* Pack 5312 (53.12V) LE at bits 0..15 and -125 (-12.5A) signed LE at bits 16..31 */
+    uint16_t raw_v = 5312u;
+    int16_t raw_i = -125;
+    uint16_t raw_iu = (uint16_t)raw_i;
+    uint8_t can_data[8] = {
+        (uint8_t)(raw_v & 0xFFu), (uint8_t)(raw_v >> 8),
+        (uint8_t)(raw_iu & 0xFFu), (uint8_t)(raw_iu >> 8),
+        0, 0, 0, 0
+    };
+    assert(edgehmi_can_ingest_frame(&scfg->can_bus, 854, false, can_data, 8, &sbus, 2000) == 2);
+    double bv = 0.0, bi = 0.0;
+    assert(edgehmi_bus_get(&sbus, edgehmi_bus_find(&sbus, "bms_pack_v"), &bv, NULL) == EDGEHMI_OK);
+    assert(edgehmi_bus_get(&sbus, edgehmi_bus_find(&sbus, "bms_pack_curr"), &bi, NULL) == EDGEHMI_OK);
+    assert(fabs(bv - 53.12) < 1e-4 && fabs(bi - (-12.5)) < 1e-4);
+
+    /* 3. History ring-buffer CSV export & Alarm Audit Ack */
+    edgehmi_history_t *hist = (edgehmi_history_t *)calloc(1, sizeof(edgehmi_history_t));
+    edgehmi_history_init(hist, &sbus);
+    edgehmi_history_record_sample(hist, &sbus, 5000);
+    edgehmi_history_record_sample(hist, &sbus, 10000);
+    char csv[2048];
+    size_t clen = edgehmi_history_export_csv(hist, csv, sizeof(csv));
+    assert(clen > 20 && strstr(csv, "timestamp_ms,pv_power_w") != NULL && strstr(csv, "10000,") != NULL);
+
+    edgehmi_alarm_event_t evt;
+    memset(&evt, 0, sizeof(evt));
+    strcpy(evt.rule_id, "rule_overtemp");
+    evt.level = ALARM_CRITICAL;
+    strcpy(evt.message, "Heatsink > 65C");
+    evt.timestamp_ms = 10000;
+    evt.active = true;
+    uint32_t aid = edgehmi_history_record_alarm(hist, &evt);
+    assert(aid == 1);
+    assert(edgehmi_history_ack_alarm(hist, aid) == 1);
+    char ajson[1024];
+    assert(edgehmi_history_export_alarms_json(hist, ajson, sizeof(ajson)) > 20);
+    assert(strstr(ajson, "\"ack\":true") != NULL);
+
+    free(hist);
+    free(scfg);
+    free(sraw);
+    printf("  [PASS] test_modbus_tcp_and_can_and_history (MBAP + CAN BMS + CSV + Alarm Ack)\n");
+}
+
 int main(void) {
     printf("Running EdgeHMI Full C11 Core Unit Tests...\n");
     test_data_bus();
@@ -422,6 +514,7 @@ int main(void) {
     test_sha256_and_epk_package();
     test_discovery_protocol();
     test_security_and_nvs_keys();
+    test_modbus_tcp_and_can_and_history();
     printf("ALL FULL C11 CORE TESTS PASSED.\n");
     return 0;
 }

@@ -13,6 +13,8 @@ extern "C" {
 #define EDGEHMI_MAX_TAGS            128
 #define EDGEHMI_MAX_MODBUS_POINTS   128
 #define EDGEHMI_MAX_MODBUS_BLOCKS   32
+#define EDGEHMI_MAX_LOCAL_IO        24
+#define EDGEHMI_MAX_CAN_SIGNALS     32
 #define EDGEHMI_MAX_RULES           64
 #define EDGEHMI_MAX_RULE_CONDS      4
 #define EDGEHMI_MAX_PAGES           8
@@ -21,6 +23,8 @@ extern "C" {
 #define EDGEHMI_MAX_TEXT_LEN        96
 #define EDGEHMI_MAX_UNIT_LEN        16
 #define EDGEHMI_MAX_ALARMS          32
+#define EDGEHMI_MAX_HISTORY_SAMPLES 256
+#define EDGEHMI_MAX_HISTORY_TAGS    8
 
 typedef enum {
     EDGEHMI_OK = 0,
@@ -180,7 +184,12 @@ typedef enum {
     WIDGET_BUTTON,
     WIDGET_SWITCH,
     WIDGET_BADGE,
-    WIDGET_CHART
+    WIDGET_CHART,
+    WIDGET_SLIDER,
+    WIDGET_SPINBOX,
+    WIDGET_ALARM_LIST,
+    WIDGET_QRCODE,
+    WIDGET_IMAGE
 } edgehmi_widget_type_t;
 
 typedef struct {
@@ -196,6 +205,7 @@ typedef struct {
     char unit[EDGEHMI_MAX_UNIT_LEN];
     double min_val;
     double max_val;
+    double step;
     uint8_t decimals;
     uint32_t color_rgb;
     bool has_write_value;
@@ -203,10 +213,81 @@ typedef struct {
     char nav_page[EDGEHMI_MAX_NAME_LEN];
     char true_text[EDGEHMI_MAX_NAME_LEN];
     char false_text[EDGEHMI_MAX_NAME_LEN];
+    char src[EDGEHMI_MAX_TEXT_LEN];
     bool confirm;
     char confirm_text[EDGEHMI_MAX_TEXT_LEN];
     bool pin_required;
 } edgehmi_widget_t;
+
+typedef enum {
+    LOCAL_IO_DI = 0,
+    LOCAL_IO_DO = 1,
+    LOCAL_IO_ADC = 2,
+    LOCAL_IO_PWM = 3
+} edgehmi_local_io_mode_t;
+
+typedef struct {
+    char tag_name[EDGEHMI_MAX_NAME_LEN];
+    int16_t tag_idx;
+    int8_t gpio_pin;
+    edgehmi_local_io_mode_t mode;
+    bool active_low;
+    double scale;
+    double offset;
+    double default_val;
+    bool retentive;
+    char unit[EDGEHMI_MAX_UNIT_LEN];
+} edgehmi_local_io_t;
+
+typedef struct {
+    bool enabled;
+    char host[64];
+    uint16_t port;
+    uint32_t timeout_ms;
+} edgehmi_mb_tcp_cfg_t;
+
+typedef struct {
+    char tag_name[EDGEHMI_MAX_NAME_LEN];
+    int16_t tag_idx;
+    uint32_t can_id;
+    bool ext_id;
+    uint8_t start_bit;
+    uint8_t bit_len;
+    bool is_signed;
+    bool big_endian; /* false = Intel (little-endian), true = Motorola (big-endian) */
+    double scale;
+    double offset;
+    double default_val;
+    char unit[EDGEHMI_MAX_UNIT_LEN];
+} edgehmi_can_signal_t;
+
+typedef struct {
+    bool enabled;
+    uint32_t bitrate;
+    int8_t tx_pin;
+    int8_t rx_pin;
+    edgehmi_can_signal_t signals[EDGEHMI_MAX_CAN_SIGNALS];
+    size_t signal_count;
+} edgehmi_can_cfg_t;
+
+typedef struct {
+    bool enabled;
+    char mqtt_uri[96];
+    char client_id[48];
+    char username[32];
+    char password[48];
+    char topic_prefix[48];
+    uint32_t publish_interval_ms;
+} edgehmi_cloud_cfg_t;
+
+typedef struct {
+    char ssid[33];
+    char password[65];
+    bool ap_fallback;
+    bool modem_4g_enabled;
+    int8_t modem_tx_pin;
+    int8_t modem_rx_pin;
+} edgehmi_net_cfg_t;
 
 typedef struct {
     char id[EDGEHMI_MAX_NAME_LEN];
@@ -226,7 +307,7 @@ typedef struct {
     char engineer_pin[16];
     char api_token[64];
 
-    /* Modbus bus settings */
+    /* Modbus RTU bus settings */
     uint8_t mb_port;
     uint32_t mb_baudrate;
     int8_t mb_tx_pin;
@@ -236,6 +317,16 @@ typedef struct {
 
     edgehmi_mb_point_t points[EDGEHMI_MAX_MODBUS_POINTS];
     size_t point_count;
+
+    /* Extended industrial buses & native GPIO/ADC */
+    edgehmi_mb_tcp_cfg_t modbus_tcp;
+    edgehmi_local_io_t local_io[EDGEHMI_MAX_LOCAL_IO];
+    size_t local_io_count;
+    edgehmi_can_cfg_t can_bus;
+
+    /* Network & Cloud MQTT telemetry */
+    edgehmi_net_cfg_t net;
+    edgehmi_cloud_cfg_t cloud;
 
     edgehmi_rule_t rules[EDGEHMI_MAX_RULES];
     size_t rule_count;

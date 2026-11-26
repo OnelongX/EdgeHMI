@@ -1,0 +1,38 @@
+menu "EdgeHMI Hardware Board Support (BSP)"
+
+    choice EDGEHMI_BOARD_TYPE
+        prompt "Target ESP32-S3 Industrial HMI Board"
+        default EDGEHMI_BOARD_WAVESHARE_43
+        help
+            Select the pre-configured ESP32-S3 RGB LCD + GT911 Touch + RS485/CAN pinout.
+
+        config EDGEHMI_BOARD_WAVESHARE_43
+            bool "Waveshare ESP32-S3-Touch-LCD-4.3 (800x480 RGB + GT911 + RS485 + CAN)"
+
+        config EDGEHMI_BOARD_SUNTON_8048S043
+            bool "Sunton / Guition ESP32-8048S043 (4.3-inch 800x480 RGB + GT911)"
+
+        config EDGEHMI_BOARD_SUNTON_8048S070
+            bool "Sunton / Guition ESP32-8048S070 (7.0-inch 800x480 RGB + GT911)"
+
+        config EDGEHMI_BOARD_HEADLESS
+            bool "Headless / Custom LCD Bring-up (No onboard RGB panel init)"
+    endchoice
+
+    config EDGEHMI_LCD_PCLK_HZ
+        int "RGB LCD Pixel Clock (Hz)"
+        default 14000000
+        range 8000000 18000000
+        help
+            Lower to 12MHz if PSRAM DMA bandwidth shows horizontal drift under heavy Wi-Fi traffic.
+
+    config EDGEHMI_BACKLIGHT_DEFAULT_PCT
+        int "Default Backlight Brightness (%)"
+        default 85
+        range 10 100
+
+    config EDGEHMI_ENABLE_4G_MODEM
+        bool "Enable external 4G Cat.1 PPP Modem Support (esp_modem)"
+        default n
+
+endmenu

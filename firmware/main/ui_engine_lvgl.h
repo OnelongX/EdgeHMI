@@ -3,13 +3,16 @@
 
 #include "data_bus.h"
 #include "edgehmi_types.h"
+#include "history_log.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Build all LVGL 9 screens & widgets from parsed JSON config */
-edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg, edgehmi_bus_t *bus);
+edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg,
+                               edgehmi_bus_t *bus,
+                               edgehmi_history_t *hist);
 
 /* Incremental dirty-tag refresh: only updates widgets bound to changed tags */
 void edgehmi_ui_sync_tick(void);
