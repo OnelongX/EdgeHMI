@@ -58,6 +58,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure & Build ESP32-S3 Firmware
+        shell: bash
         run: |
           . /opt/esp/idf/export.sh
           cd firmware
