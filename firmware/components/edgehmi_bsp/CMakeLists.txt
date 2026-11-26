@@ -6,8 +6,9 @@ idf_component_register(
     REQUIRES
         driver
         esp_lcd
-        esp_lcd_touch_gt911
         esp_timer
-        lvgl
+        lvgl__lvgl
         edgehmi_core
+    PRIV_REQUIRES
+        espressif__esp_lcd_touch_gt911
 )

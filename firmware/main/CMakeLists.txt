@@ -10,24 +10,4 @@ idf_component_register(
         "cloud_mqtt.c"
     INCLUDE_DIRS
         "."
-    REQUIRES
-        edgehmi_core
-        edgehmi_bsp
-        json
-        driver
-        esp_adc
-        esp_event
-        esp_netif
-        esp_http_server
-        esp_http_client
-        esp_https_ota
-        app_update
-        esp_wifi
-        lwip
-        mdns
-        mqtt
-        nvs_flash
-        esp_timer
-        lvgl
-        littlefs
 )

@@ -62,8 +62,11 @@ jobs:
           . /opt/esp/idf/export.sh
           cd firmware
           echo "${{ matrix.kconfig }}" > sdkconfig.ci.board
-          idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.board" set-target esp32s3
-          idf.py build
+          set -o pipefail
+          if ! (idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.board" set-target esp32s3 && idf.py build) 2>&1 | tee build.log; then
+            echo "::error title=IDF Build Tail::$(tail -n 35 build.log | tr '\n' ' ' | cut -c1-1800)"
+            exit 1
+          fi
 
       - name: Pack Verified EPK1 Firmware Package
         run: |
