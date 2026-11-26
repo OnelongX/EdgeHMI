@@ -1,3 +1,9 @@
+if(IDF_VERSION_MAJOR GREATER_EQUAL 6)
+    set(EDGEHMI_JSON_DEP espressif__cjson)
+else()
+    set(EDGEHMI_JSON_DEP json)
+endif()
+
 idf_component_register(
     SRCS
         "src/data_bus.c"
@@ -14,5 +20,5 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     REQUIRES
-        json
+        ${EDGEHMI_JSON_DEP}
 )

@@ -4,6 +4,7 @@
 #include "driver/i2c_master.h"
 #include "driver/ledc.h"
 #include "esp_heap_caps.h"
+#include "esp_idf_version.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
@@ -258,7 +259,11 @@ edgehmi_err_t edgehmi_bsp_init(void) {
         .bits_per_pixel = 16,
         .num_fbs = 2,
         .bounce_buffer_size_px = s_info.width * 10,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+        .dma_burst_size = 64,
+#else
         .psram_trans_align = 64,
+#endif
         .hsync_gpio_num = BSP_LCD_HSYNC,
         .vsync_gpio_num = BSP_LCD_VSYNC,
         .de_gpio_num = BSP_LCD_DE,
