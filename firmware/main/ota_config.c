@@ -494,8 +494,58 @@ static esp_err_t handle_upload_asset(httpd_req_t *req) {
     }
     char resp[128];
     snprintf(resp, sizeof(resp), "{\"ok\":true,\"src\":\"/api/asset/%s\",\"bytes\":%u}", fname, (unsigned)wr);
+    edgehmi_request_ui_reload();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, resp);
+}
+
+static const char *asset_content_type(const char *fname) {
+    const char *dot = strrchr(fname, '.');
+    if (!dot) return "application/octet-stream";
+    if (strcasecmp(dot, ".png") == 0)  return "image/png";
+    if (strcasecmp(dot, ".svg") == 0)  return "image/svg+xml";
+    if (strcasecmp(dot, ".bmp") == 0)  return "image/bmp";
+    if (strcasecmp(dot, ".jpg") == 0 || strcasecmp(dot, ".jpeg") == 0) return "image/jpeg";
+    return "application/octet-stream";
+}
+
+static esp_err_t handle_get_asset(httpd_req_t *req) {
+    const char *prefix = "/api/asset/";
+    size_t plen = strlen(prefix);
+    if (strncmp(req->uri, prefix, plen) != 0) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid asset uri");
+    }
+    char fname[48] = {0};
+    const char *raw_name = req->uri + plen;
+    size_t fi = 0;
+    while (raw_name[fi] != '\0' && raw_name[fi] != '?' && fi < sizeof(fname) - 1) {
+        fname[fi] = raw_name[fi];
+        fi++;
+    }
+    fname[fi] = '\0';
+    if ((raw_name[fi] != '\0' && raw_name[fi] != '?') || !is_safe_asset_name(fname)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid asset name");
+    }
+    char path[96];
+    snprintf(path, sizeof(path), "/cfg/assets/%s", fname);
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "asset not found");
+    }
+    httpd_resp_set_type(req, asset_content_type(fname));
+    httpd_resp_set_hdr(req, "Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    char chunk[1024];
+    size_t n = 0;
+    while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0) {
+        if (httpd_resp_send_chunk(req, chunk, (ssize_t)n) != ESP_OK) {
+            fclose(f);
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_FAIL;
+        }
+    }
+    fclose(f);
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t handle_setup_page(httpd_req_t *req) {
@@ -565,24 +615,26 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 0; /* Pin HTTP/OTA management server to Core 0 */
-    config.max_uri_handlers = 22;
+    config.uri_match_fn = httpd_uri_match_wildcard;
+    config.max_uri_handlers = 24;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
         return EDGEHMI_ERR_IO;
     }
 
-    httpd_uri_t u_health = { .uri = "/api/health",      .method = HTTP_GET,  .handler = handle_health };
-    httpd_uri_t u_tags   = { .uri = "/api/tags",        .method = HTTP_GET,  .handler = handle_get_tags };
-    httpd_uri_t u_cfg    = { .uri = "/api/config",      .method = HTTP_POST, .handler = handle_post_config };
-    httpd_uri_t u_hist   = { .uri = "/api/history.csv", .method = HTTP_GET,  .handler = handle_history_csv };
-    httpd_uri_t u_alarms = { .uri = "/api/alarms",      .method = HTTP_GET,  .handler = handle_get_alarms };
-    httpd_uri_t u_ack    = { .uri = "/api/alarms/ack",  .method = HTTP_POST, .handler = handle_ack_alarms };
-    httpd_uri_t u_audit  = { .uri = "/api/audit",       .method = HTTP_GET,  .handler = handle_get_audit };
-    httpd_uri_t u_recipe = { .uri = "/api/recipe/apply",.method = HTTP_POST, .handler = handle_apply_recipe };
-    httpd_uri_t u_asset  = { .uri = "/api/asset",       .method = HTTP_POST, .handler = handle_upload_asset };
-    httpd_uri_t u_h5     = { .uri = "/h5",              .method = HTTP_GET,  .handler = handle_h5_page };
-    httpd_uri_t u_setup  = { .uri = "/setup",           .method = HTTP_GET,  .handler = handle_setup_page };
-    httpd_uri_t u_wifi   = { .uri = "/api/wifi/setup",  .method = HTTP_POST, .handler = handle_wifi_setup };
+    httpd_uri_t u_health    = { .uri = "/api/health",      .method = HTTP_GET,  .handler = handle_health };
+    httpd_uri_t u_tags      = { .uri = "/api/tags",        .method = HTTP_GET,  .handler = handle_get_tags };
+    httpd_uri_t u_cfg       = { .uri = "/api/config",      .method = HTTP_POST, .handler = handle_post_config };
+    httpd_uri_t u_hist      = { .uri = "/api/history.csv", .method = HTTP_GET,  .handler = handle_history_csv };
+    httpd_uri_t u_alarms    = { .uri = "/api/alarms",      .method = HTTP_GET,  .handler = handle_get_alarms };
+    httpd_uri_t u_ack       = { .uri = "/api/alarms/ack",  .method = HTTP_POST, .handler = handle_ack_alarms };
+    httpd_uri_t u_audit     = { .uri = "/api/audit",       .method = HTTP_GET,  .handler = handle_get_audit };
+    httpd_uri_t u_recipe    = { .uri = "/api/recipe/apply",.method = HTTP_POST, .handler = handle_apply_recipe };
+    httpd_uri_t u_asset     = { .uri = "/api/asset",       .method = HTTP_POST, .handler = handle_upload_asset };
+    httpd_uri_t u_asset_get = { .uri = "/api/asset/*",     .method = HTTP_GET,  .handler = handle_get_asset };
+    httpd_uri_t u_h5        = { .uri = "/h5",              .method = HTTP_GET,  .handler = handle_h5_page };
+    httpd_uri_t u_setup     = { .uri = "/setup",           .method = HTTP_GET,  .handler = handle_setup_page };
+    httpd_uri_t u_wifi      = { .uri = "/api/wifi/setup",  .method = HTTP_POST, .handler = handle_wifi_setup };
 
     httpd_register_uri_handler(server, &u_health);
     httpd_register_uri_handler(server, &u_tags);
@@ -593,6 +645,7 @@ edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
     httpd_register_uri_handler(server, &u_audit);
     httpd_register_uri_handler(server, &u_recipe);
     httpd_register_uri_handler(server, &u_asset);
+    httpd_register_uri_handler(server, &u_asset_get);
     httpd_register_uri_handler(server, &u_h5);
     httpd_register_uri_handler(server, &u_setup);
     httpd_register_uri_handler(server, &u_wifi);

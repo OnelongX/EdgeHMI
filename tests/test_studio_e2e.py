@@ -330,6 +330,24 @@ def main() -> int:
                 assert get_resp.status == 200 and get_resp.headers.get("Content-Type") == "image/png"
                 assert get_resp.read() == tiny_png
 
+            # SVG asset upload & Stored-XSS sandbox CSP + nosniff verification
+            tiny_svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16"/></svg>'
+            r_svg = urllib.request.Request(
+                BASE + "/api/asset?name=icon.svg",
+                data=tiny_svg,
+                headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "image/svg+xml"},
+                method="POST",
+            )
+            with urllib.request.urlopen(r_svg, timeout=5) as up_svg:
+                assert up_svg.status == 200 and json.loads(up_svg.read().decode("utf-8"))["src"] == "/api/asset/icon.svg"
+
+            with urllib.request.urlopen(BASE + "/api/asset/icon.svg", timeout=5) as svg_resp:
+                assert svg_resp.status == 200
+                assert svg_resp.headers.get("Content-Type") == "image/svg+xml"
+                assert svg_resp.headers.get("X-Content-Type-Options") == "nosniff"
+                csp = svg_resp.headers.get("Content-Security-Policy", "")
+                assert "sandbox" in csp, f"Missing sandbox CSP header: {csp}"
+
             print("ALL FULL STUDIO v2.4 + H5 + ASSETS + RECIPES + AUDIT + DBC + 4G/5G + OTA + SECURITY E2E TESTS PASSED.")
             return 0
         finally:

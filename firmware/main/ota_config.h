@@ -34,6 +34,9 @@ edgehmi_err_t edgehmi_storage_read_active(char *out_buf, size_t cap, size_t *out
 /* Atomically persist validated JSON config (staging -> backup -> active) */
 edgehmi_err_t edgehmi_storage_save_active(const char *json_buf, size_t len);
 
+/* Trigger deferred UI rebuild on Core 1 (safe to call from Core 0 HTTP/asset handlers) */
+void edgehmi_request_ui_reload(void);
+
 /* Start HTTP server exposing /api/health, /api/tags, /api/config, /api/history.csv, /api/alarms */
 edgehmi_err_t edgehmi_http_start(edgehmi_bus_t *bus,
                                  const edgehmi_config_t *active_cfg,

@@ -751,6 +751,29 @@ static void test_utf8_chinese_support(void) {
     edgehmi_bus_init(&fbus, NULL, NULL, NULL);
     assert(edgehmi_config_load_json(EDGEHMI_FACTORY_DEFAULT_JSON, fcfg, &fbus, err, sizeof(err)) == EDGEHMI_OK);
     assert(fcfg->page_count >= 1 && is_valid_utf8(fcfg->device_name));
+
+    /* Strict C11 schema rejection on malformed color_rules or visible_when */
+    const char *bad_color_cfg =
+        "{\"version\":\"2.4.0\",\"device\":{\"name\":\"T\",\"width\":800,\"height\":480},"
+        "\"modbus\":{\"points\":[{\"tag\":\"t1\",\"slave\":1,\"fc\":3,\"addr\":0,\"type\":\"u16\"}]},"
+        "\"rules\":[],"
+        "\"pages\":[{\"id\":\"p1\",\"title\":\"p1\",\"widgets\":["
+        "{\"id\":\"w1\",\"type\":\"value\",\"x\":0,\"y\":0,\"w\":100,\"h\":30,\"bind\":\"t1\","
+        "\"color_rules\":[{\"op\":\"~\",\"value\":50,\"color\":\"#EF4444\"}]}"
+        "]}]}";
+    edgehmi_bus_init(&fbus, NULL, NULL, NULL);
+    assert(edgehmi_config_load_json(bad_color_cfg, fcfg, &fbus, err, sizeof(err)) == EDGEHMI_ERR_SCHEMA);
+
+    const char *bad_vis_cfg =
+        "{\"version\":\"2.4.0\",\"device\":{\"name\":\"T\",\"width\":800,\"height\":480},"
+        "\"modbus\":{\"points\":[{\"tag\":\"t1\",\"slave\":1,\"fc\":3,\"addr\":0,\"type\":\"u16\"}]},"
+        "\"rules\":[],"
+        "\"pages\":[{\"id\":\"p1\",\"title\":\"p1\",\"widgets\":["
+        "{\"id\":\"w1\",\"type\":\"value\",\"x\":0,\"y\":0,\"w\":100,\"h\":30,\"bind\":\"t1\","
+        "\"visible_when\":{\"tag\":\"t1\",\"op\":\"BADOP\",\"value\":1}}"
+        "]}]}";
+    edgehmi_bus_init(&fbus, NULL, NULL, NULL);
+    assert(edgehmi_config_load_json(bad_vis_cfg, fcfg, &fbus, err, sizeof(err)) == EDGEHMI_ERR_SCHEMA);
     free(fcfg);
 
     /* 3. Chinese alarm + audit JSON & discovery announce preserve valid UTF-8 */

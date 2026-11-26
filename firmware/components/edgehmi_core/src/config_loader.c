@@ -1080,45 +1080,60 @@ edgehmi_err_t edgehmi_config_load_json(const char *json_str,
 
             /* Optional dynamic threshold color_rules */
             const cJSON *jcr = cJSON_GetObjectItemCaseSensitive(jw_item, "color_rules");
-            if (cJSON_IsArray(jcr)) {
+            if (jcr && !cJSON_IsNull(jcr)) {
+                if (!cJSON_IsArray(jcr) || cJSON_GetArraySize(jcr) > EDGEHMI_MAX_COLOR_RULES) {
+                    set_err(err_buf, err_buf_len, "widget color_rules must be an array with <= 4 entries");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_SCHEMA;
+                }
                 const cJSON *cr_it = NULL;
                 cJSON_ArrayForEach(cr_it, jcr) {
-                    if (w->color_rule_count >= EDGEHMI_MAX_COLOR_RULES) break;
                     const cJSON *cop = cJSON_GetObjectItemCaseSensitive(cr_it, "op");
                     const cJSON *cv  = cJSON_GetObjectItemCaseSensitive(cr_it, "value");
                     const cJSON *cc  = cJSON_GetObjectItemCaseSensitive(cr_it, "color");
                     edgehmi_rule_op_t op_enum = RULE_OP_GE;
-                    if (cJSON_IsString(cop) && cJSON_IsNumber(cv) && cJSON_IsString(cc) &&
-                        parse_rule_op_str(cop->valuestring, &op_enum)) {
-                        edgehmi_color_rule_t *cr = &w->color_rules[w->color_rule_count++];
-                        cr->op = op_enum;
-                        cr->threshold = cv->valuedouble;
-                        cr->color_rgb = parse_hex_color(cc->valuestring, w->color_rgb);
+                    if (!cJSON_IsString(cop) || !cJSON_IsNumber(cv) || !cJSON_IsString(cc) ||
+                        !parse_rule_op_str(cop->valuestring, &op_enum)) {
+                        set_err(err_buf, err_buf_len, "widget color_rules entry requires valid op, numeric value and color");
+                        cJSON_Delete(root);
+                        return EDGEHMI_ERR_SCHEMA;
                     }
+                    edgehmi_color_rule_t *cr = &w->color_rules[w->color_rule_count++];
+                    cr->op = op_enum;
+                    cr->threshold = cv->valuedouble;
+                    cr->color_rgb = parse_hex_color(cc->valuestring, w->color_rgb);
                 }
             }
 
             /* Optional conditional visibility visible_when */
             const cJSON *jvis = cJSON_GetObjectItemCaseSensitive(jw_item, "visible_when");
-            if (cJSON_IsObject(jvis)) {
+            if (jvis && !cJSON_IsNull(jvis)) {
+                if (!cJSON_IsObject(jvis)) {
+                    set_err(err_buf, err_buf_len, "widget visible_when must be an object");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_SCHEMA;
+                }
                 const cJSON *vt = cJSON_GetObjectItemCaseSensitive(jvis, "tag");
                 const cJSON *vo = cJSON_GetObjectItemCaseSensitive(jvis, "op");
                 const cJSON *vv = cJSON_GetObjectItemCaseSensitive(jvis, "value");
                 edgehmi_rule_op_t vop = RULE_OP_EQ;
-                if (cJSON_IsString(vt) && cJSON_IsString(vo) && cJSON_IsNumber(vv) &&
-                    parse_rule_op_str(vo->valuestring, &vop)) {
-                    int16_t vidx = edgehmi_bus_find(bus, vt->valuestring);
-                    if (vidx < 0) {
-                        set_err(err_buf, err_buf_len, "widget visible_when references unknown tag");
-                        cJSON_Delete(root);
-                        return EDGEHMI_ERR_NOT_FOUND;
-                    }
-                    w->has_vis_rule = true;
-                    copy_str(w->vis_tag, sizeof(w->vis_tag), vt->valuestring);
-                    w->vis_tag_idx = vidx;
-                    w->vis_op = vop;
-                    w->vis_threshold = vv->valuedouble;
+                if (!cJSON_IsString(vt) || !cJSON_IsString(vo) || !cJSON_IsNumber(vv) ||
+                    !parse_rule_op_str(vo->valuestring, &vop)) {
+                    set_err(err_buf, err_buf_len, "widget visible_when requires tag, valid op and numeric value");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_SCHEMA;
                 }
+                int16_t vidx = edgehmi_bus_find(bus, vt->valuestring);
+                if (vidx < 0) {
+                    set_err(err_buf, err_buf_len, "widget visible_when references unknown tag");
+                    cJSON_Delete(root);
+                    return EDGEHMI_ERR_NOT_FOUND;
+                }
+                w->has_vis_rule = true;
+                copy_str(w->vis_tag, sizeof(w->vis_tag), vt->valuestring);
+                w->vis_tag_idx = vidx;
+                w->vis_op = vop;
+                w->vis_threshold = vv->valuedouble;
             }
 
             pg->widget_count++;

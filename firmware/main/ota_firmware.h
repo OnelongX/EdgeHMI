@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define EDGEHMI_FW_VERSION "1.1.0"
+#define EDGEHMI_FW_VERSION "2.4.0"
 
 /* Register POST /api/ota/firmware (Push) and POST /api/ota/pull (Pull) on HTTP server */
 edgehmi_err_t edgehmi_ota_register_handlers(httpd_handle_t server,

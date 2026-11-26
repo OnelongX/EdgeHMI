@@ -402,6 +402,12 @@ static edgehmi_err_t reload_config_atomic(const char *json_buf, char *err_buf, s
     return EDGEHMI_OK;
 }
 
+void edgehmi_request_ui_reload(void) {
+    if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+    s_ui_reload_pending = true;
+    if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+}
+
 void app_main(void) {
     esp_err_t nvs_rc = nvs_flash_init();
     if (nvs_rc == ESP_ERR_NVS_NO_FREE_PAGES || nvs_rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {

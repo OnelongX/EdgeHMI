@@ -33,6 +33,7 @@ jobs:
         run: |
           python3 tools/validate_config.py configs/pump_station.json configs/solar_inverter.json configs/pump_station_zh.json
           python3 tools/build_font.py configs/pump_station.json configs/solar_inverter.json configs/pump_station_zh.json
+          python3 -c "import re, pathlib; font_txt=pathlib.Path('firmware/main/font_edgehmi_cjk.c').read_text(encoding='utf-8'); cps={int(m,16) for m in re.findall(r'U\+([0-9A-Fa-f]{4,6})', font_txt)}; targets=['firmware/main/default_config.h','configs/pump_station_zh.json','configs/pump_station.json','configs/solar_inverter.json']; missing={f:[ch for ch in pathlib.Path(f).read_text(encoding='utf-8') if ord(ch)>126 and ord(ch) not in cps and ch not in '\r\n\t'] for f in targets}; missing={k:v for k,v in missing.items() if v}; assert not missing, f'Missing CJK glyphs: {missing}'; print('CJK_FONT_COVERAGE_OK')"
 
       - name: Run Studio v2.0 Full E2E + Security + Historian Suite
         run: python3 tests/test_studio_e2e.py

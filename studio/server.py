@@ -838,6 +838,8 @@ def make_handler(runtime: IndustrialRuntime):
                 data = fpath.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
+                self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox")
+                self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -914,13 +916,13 @@ def make_handler(runtime: IndustrialRuntime):
 
             raw = raw_bytes.decode("utf-8", errors="replace")
 
-            if self.path == "/api/config":
+            if path == "/api/config":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return
                 ok, msg = runtime.load_config_json(raw)
                 self._send_json(200 if ok else 422, {"ok": ok, "message": msg})
-            elif self.path == "/api/fleet/push_config":
+            elif path == "/api/fleet/push_config":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return
@@ -949,7 +951,7 @@ def make_handler(runtime: IndustrialRuntime):
                     self._send_json(e.code, {"ok": False, "message": e.read().decode("utf-8", errors="replace")})
                 except Exception as exc:
                     self._send_json(502, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/fleet/mirror_tags":
+            elif path == "/api/fleet/mirror_tags":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return
@@ -964,7 +966,7 @@ def make_handler(runtime: IndustrialRuntime):
                         self._send_json(200, json.loads(resp.read().decode("utf-8")))
                 except Exception as exc:
                     self._send_json(502, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/alarms/ack":
+            elif path == "/api/alarms/ack":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return
@@ -975,7 +977,7 @@ def make_handler(runtime: IndustrialRuntime):
                     self._send_json(200, {"ok": True, "acked": acked})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/recipe/apply":
+            elif path == "/api/recipe/apply":
                 if not runtime.check_bearer_auth(self.headers.get("Authorization")):
                     self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
                     return
@@ -988,21 +990,21 @@ def make_handler(runtime: IndustrialRuntime):
                     self._send_json(code, {"ok": ok, "message": msg, "applied": applied})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/tools/parse_dbc":
+            elif path == "/api/tools/parse_dbc":
                 try:
                     data = json.loads(raw)
                     sigs = parse_dbc_signals(str(data.get("dbc", "")))
                     self._send_json(200, {"ok": True, "signals": sigs, "count": len(sigs)})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/comm_loss":
+            elif path == "/api/comm_loss":
                 try:
                     data = json.loads(raw)
                     runtime.set_comm_loss(bool(data.get("active", False)))
                     self._send_json(200, {"ok": True, "comm_loss": runtime.comm_loss})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/wan/failover":
+            elif path == "/api/wan/failover":
                 try:
                     data = json.loads(raw)
                     info = runtime.set_wan_state(
@@ -1012,7 +1014,7 @@ def make_handler(runtime: IndustrialRuntime):
                     self._send_json(200, {"ok": True, "wan": info})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/write":
+            elif path == "/api/write":
                 try:
                     data = json.loads(raw)
                     code, ok, msg = runtime.write_tag(
@@ -1025,10 +1027,10 @@ def make_handler(runtime: IndustrialRuntime):
                     self._send_json(code, {"ok": ok, "message": msg})
                 except Exception as exc:
                     self._send_json(400, {"ok": False, "message": str(exc)})
-            elif self.path == "/api/nvs/clear":
+            elif path == "/api/nvs/clear":
                 runtime.clear_nvs()
                 self._send_json(200, {"ok": True, "message": "cleared"})
-            elif self.path == "/api/load_template":
+            elif path == "/api/load_template":
                 try:
                     data = json.loads(raw)
                     name = Path(data["name"]).name

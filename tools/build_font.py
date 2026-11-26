@@ -23,6 +23,8 @@ INDUSTRIAL_GLOSSARY = (
     "断线通讯正常离线运行待机并网光储逆变器电池防逆流限功率降额"
     "设定目标上限下限保存恢复出厂默认历史曲线导出扫码配网诊断监控"
     "开关状态数值曲线仪表进度条系统主菜单返回下一页上一页单位"
+    "控制屏引导边缘终端监测演示连接热点设备参数运行中待机中"
+    "主电机水泵蓄水池瞬时累计夜间高峰节能模式告警列表配网手机巡检"
     "℃，°C%kWhMWAVrpmHzm3/h·—：（）【】！？、。，±≥≤≠←→"
 )
 
@@ -99,6 +101,11 @@ def extract_charset(config_paths: list[Path], include_glossary: bool = True) -> 
             for ch in s:
                 if ord(ch) >= 0x20:
                     chars.add(ch)
+    default_hdr = Path(__file__).resolve().parent.parent / "firmware" / "main" / "default_config.h"
+    if default_hdr.exists():
+        for ch in default_hdr.read_text(encoding="utf-8"):
+            if ord(ch) >= 0x20:
+                chars.add(ch)
     cps = sorted(ord(c) for c in chars)
     return cps, "".join(chr(c) for c in cps)
 

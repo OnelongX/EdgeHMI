@@ -287,6 +287,20 @@ static void format_value(const edgehmi_widget_t *w, double val, char *buf, size_
     }
 }
 
+#if defined(LV_USE_FS_STDIO) && LV_USE_FS_STDIO
+static bool is_safe_asset_filename(const char *name) {
+    if (!name || name[0] == '\0' || strlen(name) > 40) return false;
+    for (size_t i = 0; name[i] != '\0'; ++i) {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        if (!ok) return false;
+        if (c == '.' && name[i + 1] == '.') return false;
+    }
+    return true;
+}
+#endif
+
 static void apply_binding_value(ui_binding_t *b, double val, edgehmi_quality_t qual) {
     const edgehmi_widget_t *w = b->meta;
     char txt[64];
@@ -620,16 +634,18 @@ edgehmi_err_t edgehmi_ui_build(const edgehmi_config_t *cfg,
                         const char *fname = w->src;
                         if (strncmp(fname, "/api/asset/", 11) == 0) fname += 11;
                         else if (strncmp(fname, "/assets/", 8) == 0) fname += 8;
-                        char fs_check[128];
-                        snprintf(fs_check, sizeof(fs_check), "/cfg/assets/%s", fname);
-                        FILE *fp = fopen(fs_check, "rb");
-                        if (fp) {
-                            fclose(fp);
-                            char lv_path[128];
-                            snprintf(lv_path, sizeof(lv_path), "S:/assets/%s", fname);
-                            obj = lv_image_create(scr);
-                            lv_image_set_src(obj, lv_path);
-                            loaded_png = true;
+                        if (is_safe_asset_filename(fname)) {
+                            char fs_check[128];
+                            snprintf(fs_check, sizeof(fs_check), "/cfg/assets/%s", fname);
+                            FILE *fp = fopen(fs_check, "rb");
+                            if (fp) {
+                                fclose(fp);
+                                char lv_path[128];
+                                snprintf(lv_path, sizeof(lv_path), "S:/assets/%s", fname);
+                                obj = lv_image_create(scr);
+                                lv_image_set_src(obj, lv_path);
+                                loaded_png = true;
+                            }
                         }
                     }
 #endif
