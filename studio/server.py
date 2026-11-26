@@ -751,6 +751,9 @@ def make_handler(runtime: IndustrialRuntime):
                 snap = runtime.snapshot()
                 self._send_json(200, {"alarms": snap["alarms"]})
             elif self.path == "/api/audit":
+                if not runtime.check_bearer_auth(self.headers.get("Authorization")):
+                    self._send_json(401, {"ok": False, "message": "missing or invalid Bearer token"})
+                    return
                 snap = runtime.snapshot()
                 self._send_json(200, {"audits": snap["audits"]})
             elif self.path == "/api/history.csv":

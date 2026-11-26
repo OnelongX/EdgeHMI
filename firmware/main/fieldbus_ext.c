@@ -11,6 +11,7 @@
 #include "lwip/sockets.h"
 #include "modbus_rtu.h"
 #include "modbus_tcp.h"
+#include "nvs.h"
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
 #include "esp_twai.h"
@@ -230,11 +231,21 @@ void edgehmi_mbtcp_scan_blocks(const edgehmi_config_t *cfg,
     uint8_t tx[20];
     uint8_t rx[260];
 
-    /* Flush pending writes via Modbus TCP */
+    /* Flush pending writes via Modbus TCP (+ persist retentive NVS) */
     for (size_t i = 0; i < cfg->point_count; ++i) {
         const edgehmi_mb_point_t *pt = &cfg->points[i];
         double wval = 0.0;
         if (edgehmi_bus_pop_write(bus, pt->tag_idx, &wval)) {
+            if (pt->retentive) {
+                nvs_handle_t nh;
+                if (nvs_open("edgehmi_ret", NVS_READWRITE, &nh) == ESP_OK) {
+                    char key[16];
+                    edgehmi_nvs_safe_key(pt->tag_name, key);
+                    nvs_set_blob(nh, key, &wval, sizeof(wval));
+                    nvs_commit(nh);
+                    nvs_close(nh);
+                }
+            }
             uint16_t tid = s_tcp_tid++;
             size_t len = 0;
             if (pt->type == TAG_TYPE_U32 || pt->type == TAG_TYPE_F32) {
@@ -287,6 +298,7 @@ void edgehmi_mbtcp_scan_blocks(const edgehmi_config_t *cfg,
 /* Core 0 Northbound Modbus TCP Server Gateway — exposes unified data_bus to SCADA / PLC */
 static const edgehmi_config_t *s_gw_cfg = NULL;
 static edgehmi_bus_t *s_gw_bus = NULL;
+static edgehmi_history_t *s_gw_hist = NULL;
 static SemaphoreHandle_t s_gw_mutex = NULL;
 
 static void mbtcp_server_task(void *arg) {
@@ -353,10 +365,22 @@ static void mbtcp_server_task(void *arg) {
         if (cli < 0) {
             continue;
         }
-        struct timeval ctv = { .tv_sec = 5, .tv_usec = 0 };
+        struct timeval ctv = { .tv_sec = 2, .tv_usec = 0 };
         setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, &ctv, sizeof(ctv));
 
         for (;;) {
+            /* Re-verify gateway is still enabled on same port across hot-reloads */
+            bool still_ok = false;
+            if (s_gw_mutex) xSemaphoreTake(s_gw_mutex, portMAX_DELAY);
+            if (s_gw_cfg) {
+                uint16_t cfg_port = s_gw_cfg->modbus_tcp.server_port ? s_gw_cfg->modbus_tcp.server_port : 502;
+                still_ok = s_gw_cfg->modbus_tcp.server_enabled && (cfg_port == bound_port);
+            }
+            if (s_gw_mutex) xSemaphoreGive(s_gw_mutex);
+            if (!still_ok) {
+                break;
+            }
+
             int n = recv(cli, rx_buf, sizeof(rx_buf), 0);
             if (n <= 0) {
                 break;
@@ -365,7 +389,23 @@ static void mbtcp_server_task(void *arg) {
             uint64_t ts = (uint64_t)(esp_timer_get_time() / 1000LL);
             if (s_gw_mutex) xSemaphoreTake(s_gw_mutex, portMAX_DELAY);
             if (s_gw_bus) {
+                uint8_t fc = (n >= 8) ? rx_buf[7] : 0;
+                int16_t audit_idx = -1;
+                double old_v = 0.0;
+                if (n >= 12 && (fc == 5 || fc == 6 || fc == 16)) {
+                    uint16_t addr = (uint16_t)(((uint16_t)rx_buf[8] << 8) | rx_buf[9]);
+                    if (fc == 5 && addr < s_gw_bus->count) audit_idx = (int16_t)addr;
+                    else if (fc == 6 && addr >= 1000u && (addr - 1000u) < s_gw_bus->count) audit_idx = (int16_t)(addr - 1000u);
+                    else if (fc == 16 && (addr % 2u) == 0u && (addr / 2u) < s_gw_bus->count) audit_idx = (int16_t)(addr / 2u);
+                    if (audit_idx >= 0) edgehmi_bus_get(s_gw_bus, audit_idx, &old_v, NULL);
+                }
                 rlen = edgehmi_mbtcp_handle_server_req(rx_buf, (size_t)n, s_gw_bus, ts, tx_buf, sizeof(tx_buf));
+                if (s_gw_hist && audit_idx >= 0 && rlen >= 12 && (tx_buf[7] & 0x80u) == 0) {
+                    edgehmi_history_record_audit(
+                        s_gw_hist, AUDIT_SRC_MODBUS_GW, "scada_tcp",
+                        s_gw_bus->tags[audit_idx].name, old_v,
+                        s_gw_bus->tags[audit_idx].pending_write, ts);
+                }
             }
             if (s_gw_mutex) xSemaphoreGive(s_gw_mutex);
             if (rlen > 0 && send(cli, tx_buf, rlen, 0) < 0) {
@@ -378,9 +418,11 @@ static void mbtcp_server_task(void *arg) {
 
 edgehmi_err_t edgehmi_mbtcp_server_start(const edgehmi_config_t *active_cfg,
                                          edgehmi_bus_t *bus,
+                                         edgehmi_history_t *history,
                                          SemaphoreHandle_t cfg_mutex) {
     s_gw_cfg = active_cfg;
     s_gw_bus = bus;
+    s_gw_hist = history;
     s_gw_mutex = cfg_mutex;
     xTaskCreatePinnedToCore(mbtcp_server_task, "edgehmi_mbgw", 4096, NULL, 3, NULL, 0);
     return EDGEHMI_OK;

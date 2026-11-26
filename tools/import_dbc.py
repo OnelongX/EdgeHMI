@@ -66,13 +66,9 @@ def parse_dbc_signals(dbc_text: str, max_signals: int = 32) -> list[dict[str, An
             suffix += 1
         seen_tags.add(tag)
 
-        # DBC @1 = Intel little-endian, @0 = Motorola big-endian
+        # DBC @1 = Intel little-endian (LSB start_bit), @0 = Motorola big-endian (MSB start_bit)
+        # Note: EdgeHMI C11 `can_codec.c` natively uses Vector DBC MSB start_bit numbering for big_endian!
         big_endian = endian_s == "0"
-        if big_endian:
-            # Convert Vector DBC MSB bit numbering to byte-aligned big-endian start_bit
-            byte_idx = start_bit // 8
-            bit_in_byte = start_bit % 8
-            start_bit = byte_idx * 8 + (7 - bit_in_byte)
 
         entry: dict[str, Any] = {
             "tag": tag,

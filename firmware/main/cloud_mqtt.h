@@ -6,6 +6,7 @@
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "history_log.h"
 #include "rule_engine.h"
 
 #ifdef __cplusplus
@@ -18,6 +19,7 @@ esp_netif_t *edgehmi_net_start(const edgehmi_config_t *cfg);
 /* Start Core 0 MQTT telemetry publisher + remote command subscriber with offline ring-buffer */
 edgehmi_err_t edgehmi_cloud_mqtt_start(const edgehmi_config_t *active_cfg,
                                        edgehmi_bus_t *bus,
+                                       edgehmi_history_t *history,
                                        SemaphoreHandle_t cfg_mutex);
 
 /* Reconnect MQTT client after config hot-reload changes broker URI/credentials */

@@ -157,40 +157,42 @@ static void control_task(void *arg) {
         xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
         uint32_t interval_ms = s_active_cfg.poll_interval_ms >= 50 ? s_active_cfg.poll_interval_ms : 250;
 
-        /* 1. Flush pending writes from UI / Rule / Cloud to RS485 slaves + NVS */
-        for (size_t i = 0; i < s_active_cfg.point_count; ++i) {
-            const edgehmi_mb_point_t *pt = &s_active_cfg.points[i];
-            double wval = 0.0;
-            if (edgehmi_bus_pop_write(&s_bus, pt->tag_idx, &wval)) {
-                if (pt->retentive) {
-                    nvs_retentive_save(pt->tag_name, wval);
-                }
-                if (s_uart_initialized) {
-                    size_t len = 0;
-                    if (pt->type == TAG_TYPE_U32 || pt->type == TAG_TYPE_F32) {
-                        len = edgehmi_mb_build_write_multi(pt, wval, tx_buf, sizeof(tx_buf));
-                    } else {
-                        /* Respect Holding Register (FC03/06) vs Coil (FC01/05) even for BOOL tags */
-                        uint8_t wfc = (pt->func_code == 1 || pt->func_code == 5) ? 5 : 6;
-                        uint16_t raw = edgehmi_mb_eng_to_raw16(pt, wval);
-                        len = edgehmi_mb_build_write_single(
-                            pt->slave_id, wfc, pt->reg_addr, raw, tx_buf, sizeof(tx_buf));
+        /* 1. Flush pending writes from UI / Rule / Cloud to RS485 slaves + NVS (when Modbus TCP client is not primary) */
+        if (!s_active_cfg.modbus_tcp.enabled) {
+            for (size_t i = 0; i < s_active_cfg.point_count; ++i) {
+                const edgehmi_mb_point_t *pt = &s_active_cfg.points[i];
+                double wval = 0.0;
+                if (edgehmi_bus_pop_write(&s_bus, pt->tag_idx, &wval)) {
+                    if (pt->retentive) {
+                        nvs_retentive_save(pt->tag_name, wval);
                     }
-                    if (len > 0) {
-                        s_mb_stats.tx_count++;
-                        uart_flush_input(s_active_cfg.mb_port);
-                        uart_write_bytes(s_active_cfg.mb_port, (const char *)tx_buf, len);
-                        uart_read_bytes(s_active_cfg.mb_port, rx_buf, sizeof(rx_buf),
-                                        pdMS_TO_TICKS(s_active_cfg.mb_timeout_ms));
+                    if (s_uart_initialized) {
+                        size_t len = 0;
+                        if (pt->type == TAG_TYPE_U32 || pt->type == TAG_TYPE_F32) {
+                            len = edgehmi_mb_build_write_multi(pt, wval, tx_buf, sizeof(tx_buf));
+                        } else {
+                            /* Respect Holding Register (FC03/06) vs Coil (FC01/05) even for BOOL tags */
+                            uint8_t wfc = (pt->func_code == 1 || pt->func_code == 5) ? 5 : 6;
+                            uint16_t raw = edgehmi_mb_eng_to_raw16(pt, wval);
+                            len = edgehmi_mb_build_write_single(
+                                pt->slave_id, wfc, pt->reg_addr, raw, tx_buf, sizeof(tx_buf));
+                        }
+                        if (len > 0) {
+                            s_mb_stats.tx_count++;
+                            uart_flush_input(s_active_cfg.mb_port);
+                            uart_write_bytes(s_active_cfg.mb_port, (const char *)tx_buf, len);
+                            uart_read_bytes(s_active_cfg.mb_port, rx_buf, sizeof(rx_buf),
+                                            pdMS_TO_TICKS(s_active_cfg.mb_timeout_ms));
+                        }
                     }
+                    esp_task_wdt_reset();
                 }
-                esp_task_wdt_reset();
             }
         }
 
         /* 2. Deterministic Modbus RTU Block Read scan with retry, TWDT feeding & comm-loss marking */
         uint8_t blk_rx[128];
-        if (s_uart_initialized) {
+        if (s_uart_initialized && !s_active_cfg.modbus_tcp.enabled) {
             for (size_t b = 0; b < s_mb_block_count; ++b) {
                 const edgehmi_mb_block_t *blk = &s_mb_blocks[b];
                 size_t len = edgehmi_mb_build_read_req(
@@ -400,7 +402,12 @@ static edgehmi_err_t reload_config_atomic(const char *json_buf, char *err_buf, s
 }
 
 void app_main(void) {
-    ESP_ERROR_CHECK(nvs_flash_init());
+    esp_err_t nvs_rc = nvs_flash_init();
+    if (nvs_rc == ESP_ERR_NVS_NO_FREE_PAGES || nvs_rc == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_rc = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_rc);
     s_bus_mutex = xSemaphoreCreateMutex();
     s_cfg_mutex = xSemaphoreCreateMutex();
     edgehmi_bus_init(&s_bus, bus_lock_cb, bus_unlock_cb, s_bus_mutex);
@@ -429,9 +436,9 @@ void app_main(void) {
     esp_netif_t *wifi_sta = edgehmi_net_start(&s_active_cfg);
     edgehmi_cellular_start(&s_active_cfg, wifi_sta, s_cfg_mutex);
     edgehmi_http_start(&s_bus, &s_active_cfg, &s_mb_stats, &s_history, s_cfg_mutex, reload_config_atomic);
-    edgehmi_mbtcp_server_start(&s_active_cfg, &s_bus, s_cfg_mutex);
+    edgehmi_mbtcp_server_start(&s_active_cfg, &s_bus, &s_history, s_cfg_mutex);
     edgehmi_discovery_start(&s_active_cfg, &s_bus, s_cfg_mutex, 80);
-    edgehmi_cloud_mqtt_start(&s_active_cfg, &s_bus, s_cfg_mutex);
+    edgehmi_cloud_mqtt_start(&s_active_cfg, &s_bus, &s_history, s_cfg_mutex);
 
     /* Core 1: Deterministic fieldbus + interlock + LVGL rendering */
     xTaskCreatePinnedToCore(control_task, "edgehmi_ctrl", 6144, NULL, 6, NULL, 1);

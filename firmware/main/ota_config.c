@@ -125,6 +125,22 @@ edgehmi_err_t edgehmi_storage_save_active(const char *json_buf, size_t len) {
     return EDGEHMI_OK;
 }
 
+static bool recv_body_exact(httpd_req_t *req, char *buf, size_t cap) {
+    if (!req || !buf || req->content_len <= 0 || (size_t)req->content_len >= cap) {
+        return false;
+    }
+    int received = 0;
+    while (received < req->content_len) {
+        int r = httpd_req_recv(req, buf + received, req->content_len - received);
+        if (r <= 0) {
+            return false;
+        }
+        received += r;
+    }
+    buf[received] = '\0';
+    return true;
+}
+
 static bool check_bearer_auth(httpd_req_t *req) {
     char token[64] = {0};
     if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
@@ -323,6 +339,11 @@ static esp_err_t handle_ack_alarms(httpd_req_t *req) {
 }
 
 static esp_err_t handle_get_audit(httpd_req_t *req) {
+    if (!check_bearer_auth(req)) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"unauthorized\"}");
+    }
     if (!s_history) {
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "history not ready");
     }
@@ -347,12 +368,9 @@ static esp_err_t handle_apply_recipe(httpd_req_t *req) {
         return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"unauthorized\"}");
     }
     char body[192] = {0};
-    if (req->content_len <= 0 || req->content_len >= (int)sizeof(body)) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid payload");
+    if (!recv_body_exact(req, body, sizeof(body))) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid or truncated payload");
     }
-    int r = httpd_req_recv(req, body, req->content_len);
-    if (r <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
-    body[r] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     const cJSON *jrid = root ? cJSON_GetObjectItemCaseSensitive(root, "recipe_id") : NULL;
@@ -389,8 +407,9 @@ static const char *s_setup_html =
     "<h2>EdgeHMI 现场配网 (Wi-Fi / 4G / 5G)</h2><p>配置厂区 Wi-Fi 或 4G/5G 物联网卡 APN，保存至 NVS 并自动重连。</p>"
     "<input id=s placeholder='Wi-Fi SSID (可选)'><input id=p type=password placeholder='Wi-Fi Password'>"
     "<input id=a placeholder='4G/5G APN (如 cmnet / 3gnet / ctiot)'>"
+    "<input id=pin type=password placeholder='工程师 PIN (默认 1234)'>"
     "<button onclick=\"fetch('/api/wifi/setup',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({ssid:s.value,password:p.value,apn:a.value})}).then(r=>r.json()).then(d=>m.textContent=d.ok?'已保存，正在接入网络...':d.error)\">保存并连接</button>"
+    "body:JSON.stringify({ssid:s.value,password:p.value,apn:a.value,pin:pin.value})}).then(r=>r.json()).then(d=>m.textContent=d.ok?'已保存，正在接入网络...':d.error)\">保存并连接</button>"
     "<p id=m></p></body></html>";
 
 static esp_err_t handle_setup_page(httpd_req_t *req) {
@@ -400,14 +419,29 @@ static esp_err_t handle_setup_page(httpd_req_t *req) {
 
 static esp_err_t handle_wifi_setup(httpd_req_t *req) {
     char body[256] = {0};
-    if (req->content_len <= 0 || req->content_len >= (int)sizeof(body)) {
+    if (!recv_body_exact(req, body, sizeof(body))) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid body");
     }
-    int r = httpd_req_recv(req, body, req->content_len);
-    if (r <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
-    body[r] = '\0';
 
     cJSON *root = cJSON_Parse(body);
+    const cJSON *jpin  = root ? cJSON_GetObjectItemCaseSensitive(root, "pin") : NULL;
+    char expected_pin[16] = {0};
+    if (s_cfg_mutex) xSemaphoreTake(s_cfg_mutex, portMAX_DELAY);
+    if (s_active_cfg && s_active_cfg->engineer_pin[0] != '\0') {
+        edgehmi_copy_str(expected_pin, sizeof(expected_pin), s_active_cfg->engineer_pin);
+    }
+    if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
+
+    /* Require either valid Bearer token OR matching Engineer PIN to prevent rogue LAN/SoftAP hijack */
+    if (expected_pin[0] != '\0' && !check_bearer_auth(req)) {
+        const char *got_pin = cJSON_IsString(jpin) ? jpin->valuestring : "";
+        if (!edgehmi_ct_str_eq(got_pin, expected_pin)) {
+            cJSON_Delete(root);
+            httpd_resp_set_status(req, "403 Forbidden");
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid Engineer PIN\"}");
+        }
+    }
     const cJSON *jssid = root ? cJSON_GetObjectItemCaseSensitive(root, "ssid") : NULL;
     const cJSON *jpass = root ? cJSON_GetObjectItemCaseSensitive(root, "password") : NULL;
     const cJSON *japn  = root ? cJSON_GetObjectItemCaseSensitive(root, "apn") : NULL;

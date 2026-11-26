@@ -4,9 +4,21 @@
 #include "driver/ledc.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
+#include "nvs.h"
 
 static const char *TAG = "edgehmi_lio";
 static adc_oneshot_unit_handle_t s_adc1 = NULL;
+
+static void local_io_save_retentive(const char *tag_name, double val) {
+    nvs_handle_t h;
+    if (nvs_open("edgehmi_ret", NVS_READWRITE, &h) == ESP_OK) {
+        char key[16];
+        edgehmi_nvs_safe_key(tag_name, key);
+        nvs_set_blob(h, key, &val, sizeof(val));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
 
 static bool gpio_to_adc1_channel(int8_t pin, adc_channel_t *out_ch) {
     /* ESP32-S3 ADC1 maps GPIO1..GPIO10 -> ADC_CHANNEL_0..ADC_CHANNEL_9 */
@@ -108,6 +120,9 @@ void edgehmi_local_io_sync(const edgehmi_config_t *cfg, edgehmi_bus_t *bus, uint
                 int lvl = (wv > 0.5) ? 1 : 0;
                 if (io->active_low) lvl = !lvl;
                 gpio_set_level((gpio_num_t)io->gpio_pin, lvl);
+                double applied_v = (wv > 0.5) ? 1.0 : 0.0;
+                edgehmi_bus_set(bus, io->tag_idx, applied_v, TAG_QUAL_GOOD, now_ms);
+                if (io->retentive) local_io_save_retentive(io->tag_name, applied_v);
             }
         } else if (io->mode == LOCAL_IO_ADC) {
             adc_channel_t ch = ADC_CHANNEL_0;
@@ -126,6 +141,8 @@ void edgehmi_local_io_sync(const edgehmi_config_t *cfg, edgehmi_bus_t *bus, uint
                 uint32_t duty = (uint32_t)(wv * 1023.0 / 100.0);
                 ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)pwm_ch, duty);
                 ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)pwm_ch);
+                edgehmi_bus_set(bus, io->tag_idx, wv, TAG_QUAL_GOOD, now_ms);
+                if (io->retentive) local_io_save_retentive(io->tag_name, wv);
             }
             pwm_ch++;
         }

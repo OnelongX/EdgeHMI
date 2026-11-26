@@ -115,6 +115,19 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
         pin = dev.get("engineer_pin")
         if pin is not None and (not isinstance(pin, str) or not re.match(r"^[0-9]{4,8}$", pin)):
             errors.append("device.engineer_pin must be a 4-8 digit string")
+        idle_dim = dev.get("idle_dim_s")
+        if idle_dim is not None and not (isinstance(idle_dim, int) and 0 <= idle_dim <= 65535):
+            errors.append("device.idle_dim_s must be integer in [0, 65535]")
+        idle_br = dev.get("idle_brightness_pct")
+        if idle_br is not None and not (isinstance(idle_br, int) and 0 <= idle_br <= 100):
+            errors.append("device.idle_brightness_pct must be integer in [0, 100]")
+
+    mbtcp = cfg.get("modbus_tcp", {})
+    if isinstance(mbtcp, dict):
+        for pkey in ("port", "server_port"):
+            pval = mbtcp.get(pkey)
+            if pval is not None and not (isinstance(pval, int) and 1 <= pval <= 65535):
+                errors.append(f"modbus_tcp.{pkey} ({pval}) must be integer in [1, 65535]")
 
     # 1b. Network & 4G/5G Cellular Validation
     net = cfg.get("network", {})
@@ -207,6 +220,11 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
                 used_pins.add(pin)
             if mode not in VALID_IO_MODES:
                 errors.append(f"local_io[{idx}] ({tag}): invalid mode '{mode}'")
+            if io.get("retentive"):
+                nkey = nvs_safe_key(tag)
+                if nkey in used_nvs_keys:
+                    errors.append(f"local_io[{idx}] ({tag}): NVS key '{nkey}' collides with '{used_nvs_keys[nkey]}'")
+                used_nvs_keys[nkey] = tag
             tags[tag] = {"tag": tag, "rw": "rw" if mode in {"do", "pwm"} else "r", "retentive": io.get("retentive", False)}
 
     can_bus = cfg.get("can_bus", {})
@@ -375,9 +393,9 @@ def validate_config(cfg: dict[str, Any]) -> tuple[list[str], list[str], dict[str
             bind = w.get("bind")
             if bind and bind not in tags:
                 errors.append(f"widget '{wid}': binds to unknown tag '{bind}'")
-            if w.get("write_value") is not None and bind in tags:
+            if (w.get("write_value") is not None or wtype in {"switch", "slider", "spinbox", "dropdown"}) and bind in tags:
                 if tags[bind].get("rw", "r") == "r":
-                    errors.append(f"widget '{wid}': writes to read-only tag '{bind}'")
+                    errors.append(f"widget '{wid}' ({wtype}): writes to read-only tag '{bind}'")
 
             nav = w.get("nav_page")
             if nav and nav not in page_ids:

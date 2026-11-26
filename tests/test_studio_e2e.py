@@ -256,7 +256,9 @@ def main() -> int:
             _, st_rec = req_json("GET", "/api/state")
             assert st_rec["tags"]["power_limit"]["value"] == 80.0
 
-            code, aud_res = req_json("GET", "/api/audit")
+            code, aud_unauth = req_json("GET", "/api/audit")
+            assert code == 401
+            code, aud_res = req_json("GET", "/api/audit", token=TOKEN)
             assert code == 200 and len(aud_res.get("audits", [])) >= 3
             assert any(a["source"] == "recipe" and a["actor"] == "e2e_operator" for a in aud_res["audits"])
 
@@ -270,7 +272,15 @@ def main() -> int:
             assert code == 200 and dbc_res["ok"] and dbc_res["count"] == 2
             s0, s1 = dbc_res["signals"][0], dbc_res["signals"][1]
             assert s0["tag"] == "cellmaxtemp" and s0["signed"] is True and s0["offset"] == -40.0
-            assert s1["ext_id"] is True and s1["big_endian"] is True and s1["start_bit"] == 0
+            assert s1["ext_id"] is True and s1["big_endian"] is True and s1["start_bit"] == 7
+
+            # Verify validator rejects interactive dropdown/slider bound to read-only tag
+            bad_cfg = json.loads(solar_raw)
+            bad_cfg["pages"][0]["widgets"].append({
+                "id": "bad_dd", "type": "dropdown", "x": 10, "y": 10, "w": 100, "h": 32, "bind": "pv_power_w"
+            })
+            code, bad_res = req_json("POST", "/api/config", json.dumps(bad_cfg), token=TOKEN)
+            assert code == 422 and not bad_res["ok"]
 
             print("ALL FULL STUDIO v2.3 + RECIPES + AUDIT + DBC + 4G/5G + OTA + SECURITY E2E TESTS PASSED.")
             return 0

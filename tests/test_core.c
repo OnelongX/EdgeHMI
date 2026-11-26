@@ -479,6 +479,20 @@ static void test_modbus_tcp_and_can_and_history(void) {
     assert(edgehmi_bus_get(&sbus, edgehmi_bus_find(&sbus, "bms_pack_curr"), &bi, NULL) == EDGEHMI_OK);
     assert(fabs(bv - 53.12) < 1e-4 && fabs(bi - (-12.5)) < 1e-4);
 
+    /* 2b. Verify Motorola big-endian (@0+) DBC MSB start_bit=7 16-bit decoding (0x1D4C = 7500 -> 750.0V) */
+    edgehmi_can_signal_t moto_sig;
+    memset(&moto_sig, 0, sizeof(moto_sig));
+    moto_sig.start_bit = 7; /* Standard Vector DBC MSB of byte 0 */
+    moto_sig.bit_len = 16;
+    moto_sig.big_endian = true;
+    moto_sig.is_signed = false;
+    moto_sig.scale = 0.1;
+    moto_sig.offset = 0.0;
+    uint8_t moto_frame[8] = { 0x1Du, 0x4Cu, 0, 0, 0, 0, 0, 0 };
+    double moto_val = 0.0;
+    assert(edgehmi_can_decode_signal(&moto_sig, moto_frame, 8, &moto_val) == EDGEHMI_OK);
+    assert(fabs(moto_val - 750.0) < 1e-4);
+
     /* 3. History ring-buffer CSV export & Alarm Audit Ack */
     edgehmi_history_t *hist = (edgehmi_history_t *)calloc(1, sizeof(edgehmi_history_t));
     edgehmi_history_init(hist, &sbus);

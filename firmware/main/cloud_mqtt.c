@@ -30,6 +30,7 @@ typedef struct {
 
 static const edgehmi_config_t *s_cfg = NULL;
 static edgehmi_bus_t *s_bus = NULL;
+static edgehmi_history_t *s_hist = NULL;
 static SemaphoreHandle_t s_cfg_mutex = NULL;
 static esp_mqtt_client_handle_t s_client = NULL;
 static volatile bool s_mqtt_connected = false;
@@ -114,7 +115,13 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
             int16_t idx = edgehmi_bus_find(s_bus, jtag->valuestring);
             if (idx >= 0) {
                 uint64_t ts = (uint64_t)(esp_timer_get_time() / 1000LL);
-                edgehmi_bus_request_write(s_bus, idx, jval->valuedouble, ts);
+                double old_v = 0.0;
+                edgehmi_bus_get(s_bus, idx, &old_v, NULL);
+                if (edgehmi_bus_request_write(s_bus, idx, jval->valuedouble, ts) == EDGEHMI_OK && s_hist) {
+                    edgehmi_history_record_audit(
+                        s_hist, AUDIT_SRC_MQTT, "cloud_cmd",
+                        jtag->valuestring, old_v, jval->valuedouble, ts);
+                }
                 ESP_LOGI(TAG, "Remote MQTT write: %s = %.3f", jtag->valuestring, jval->valuedouble);
             }
             if (s_cfg_mutex) xSemaphoreGive(s_cfg_mutex);
@@ -288,9 +295,11 @@ void edgehmi_cloud_mqtt_reconfigure(void) {
 
 edgehmi_err_t edgehmi_cloud_mqtt_start(const edgehmi_config_t *active_cfg,
                                        edgehmi_bus_t *bus,
+                                       edgehmi_history_t *history,
                                        SemaphoreHandle_t cfg_mutex) {
     s_cfg = active_cfg;
     s_bus = bus;
+    s_hist = history;
     s_cfg_mutex = cfg_mutex;
     if (!s_oq_mutex) {
         s_oq_mutex = xSemaphoreCreateMutex();

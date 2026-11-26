@@ -135,9 +135,13 @@ static esp_err_t handle_pull_firmware(httpd_req_t *req) {
     if (req->content_len <= 0 || req->content_len >= (int)sizeof(body)) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid payload");
     }
-    int r = httpd_req_recv(req, body, req->content_len);
-    if (r <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
-    body[r] = '\0';
+    int received = 0;
+    while (received < req->content_len) {
+        int r = httpd_req_recv(req, body + received, req->content_len - received);
+        if (r <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed");
+        received += r;
+    }
+    body[received] = '\0';
 
     cJSON *root = cJSON_Parse(body);
     const cJSON *jurl = root ? cJSON_GetObjectItemCaseSensitive(root, "url") : NULL;

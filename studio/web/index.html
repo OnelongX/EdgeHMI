@@ -1148,6 +1148,11 @@ window.addEventListener('mouseup', async () => {
 function renderHMI(state, forceRedraw = false) {
   lastState = state;
   if (designMode && !forceRedraw) return;
+  /* Prevent 250ms poll from closing an open <select> dropdown or interrupting active slider drag */
+  const activeEl = document.activeElement;
+  const screenEl = document.getElementById('hmi-screen');
+  const interactingCanvas = !forceRedraw && activeEl && screenEl && screenEl.contains(activeEl) &&
+    (activeEl.tagName === 'SELECT' || activeEl.tagName === 'INPUT');
 
   currentConfig = state.config;
   const dev = state.config.device;
@@ -1203,6 +1208,7 @@ function renderHMI(state, forceRedraw = false) {
   currentPageId = page.id;
   document.getElementById('page-indicator').textContent = `Page: ${page.title}`;
 
+  if (interactingCanvas) return;
   screen.innerHTML = '';
   const clBtn = document.getElementById('btn-comm-loss');
   if (clBtn) clBtn.textContent = state.comm_loss ? '恢复 RS485 通讯' : '模拟 RS485 断线';
