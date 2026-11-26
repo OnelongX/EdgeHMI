@@ -1,6 +1,7 @@
 #include "cloud_mqtt.h"
 
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -32,8 +33,8 @@ static esp_mqtt_client_handle_t s_client = NULL;
 static volatile bool s_mqtt_connected = false;
 static char s_dev_id[32] = "edgehmi-000000";
 
-/* Static offline store-and-forward ring buffer (zero dynamic heap fragmentation) */
-static mqtt_queued_msg_t s_offline_q[MQTT_OFFLINE_Q_CAP];
+/* Static offline store-and-forward ring buffer in PSRAM (zero dynamic heap fragmentation) */
+static EXT_RAM_BSS_ATTR mqtt_queued_msg_t s_offline_q[MQTT_OFFLINE_Q_CAP];
 static size_t s_oq_head = 0;
 static size_t s_oq_count = 0;
 static SemaphoreHandle_t s_oq_mutex = NULL;

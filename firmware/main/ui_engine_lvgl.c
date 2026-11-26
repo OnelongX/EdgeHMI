@@ -1,5 +1,6 @@
 #include "ui_engine_lvgl.h"
 
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "lvgl.h"
@@ -37,7 +38,7 @@ static const edgehmi_config_t *s_cfg = NULL;
 static edgehmi_bus_t *s_bus = NULL;
 static edgehmi_history_t *s_hist = NULL;
 static uint32_t s_last_alarm_seq = 0;
-static ui_page_runtime_t s_pages[EDGEHMI_MAX_PAGES];
+static EXT_RAM_BSS_ATTR ui_page_runtime_t s_pages[EDGEHMI_MAX_PAGES];
 static size_t s_page_count = 0;
 static size_t s_active_page = 0;
 static lv_obj_t *s_comm_banner = NULL;

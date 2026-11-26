@@ -15,6 +15,7 @@
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
@@ -30,11 +31,11 @@
 
 static const char *TAG = "edgehmi_main";
 
-/* Static runtime instances — zero runtime fragmentation */
-static edgehmi_config_t s_active_cfg;
+/* Static runtime instances placed in PSRAM BSS — zero heap fragmentation & saves ~200KB internal SRAM */
+static EXT_RAM_BSS_ATTR edgehmi_config_t s_active_cfg;
 static edgehmi_bus_t s_bus;
 static edgehmi_rule_engine_t s_rules;
-static edgehmi_history_t s_history;
+static EXT_RAM_BSS_ATTR edgehmi_history_t s_history;
 static edgehmi_mb_block_t s_mb_blocks[EDGEHMI_MAX_MODBUS_BLOCKS];
 static size_t s_mb_block_count = 0;
 static edgehmi_mb_stats_t s_mb_stats;
